@@ -58,6 +58,10 @@ BENCH_WINDOW = 4000
 _C_DELIVERED = re.compile(r"^[ \t]*The Judgments? of the Court (?:was|were) delivered by", _F)
 # Upper case only: catchwords say "On appeal, held:" in lower case.
 _C_HELD = re.compile(r"HELD\s*:")
+# Single-point headnotes print "<catchwords> - Held: <holding>" with no upper-case
+# HELD anywhere (about 10% of a 2010-2023 sample). Used only when no "HELD:"
+# exists, so the inline "- Held:" inside multi-point catchwords is never a start.
+_C_HELD_TITLE = re.compile(r"\bHeld\s*:")
 _C_CASE_LAW = re.compile(r"^[ \t]*Case Law Reference[ \t]*$", _F)
 _C_JURISDICTION = re.compile(
     # Upper case only (a Held line may start "criminal court has no jurisdiction"),
@@ -407,7 +411,8 @@ def _zone_era_c(
 ) -> Zones:
     n = len(text)
     missing: list[Zone] = []
-    first_held = _C_HELD.search(text)
+    held_rx = _C_HELD if _C_HELD.search(text) else _C_HELD_TITLE
+    first_held = held_rx.search(text)
     limit = min(BENCH_WINDOW, first_held.start() if first_held else len(text))
     bench = _C_BENCH.search(text, 0, limit)
     if bench:
@@ -417,7 +422,7 @@ def _zone_era_c(
         header_span = (0, 0)
         ed_start = 0
         missing.append(Zone.HEADER)
-    helds = list(_C_HELD.finditer(text, ed_start))
+    helds = list(held_rx.finditer(text, ed_start))
     search_from = helds[0].end() if helds else ed_start
     juris = _first(_C_JURISDICTION, text, search_from) or _first(_C_DELIVERED, text, search_from)
     case_law = _first(_C_CASE_LAW, text, search_from)

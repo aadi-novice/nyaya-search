@@ -214,3 +214,34 @@ def test_era_c_judgment_falls_back_to_delivered_by_line(settings):
     assert text2[z2.judgment_span[0] :].startswith("The Judgment of the Court was delivered by")
     assert Zone.JUDGMENT not in z2.missing
     assert z.acts == ["Contempt of Courts Act, 1971"]
+
+
+SINGLE_POINT_C = """VIIT PHARMACY COLLEGE v. UNIVERSITY
+(Writ Petition (C) No.390 of 2021)
+APRIL 15, 2021
+[R.F. NARIMAN, B.R. GAVAI AND HRISHIKESH ROY, JJ.]
+Education/Educational Institutions: Pharmacy college – University refused
+affiliation – Held: Indisputably, the PCI had granted approval to the
+petitioners – Direction to grant affiliation. [Para 9]
+CIVIL ORIGINAL JURISDICTION : Writ Petition (C) No. 390 of 2021.
+B.R. GAVAI, J. 1. The petitioners seek affiliation.
+9. We therefore direct the University to grant affiliation.
+"""
+
+
+def test_era_c_single_point_title_case_held(settings):
+    doc = parsed_from_text("2021_4_274_278", Era.C, SINGLE_POINT_C)
+    z = zone(doc, settings)
+    assert Zone.EDITORIAL not in z.missing
+    assert len(z.editorial) == 1
+    assert z.editorial[0].para_refs == ["9"]
+    assert z.editorial[0].text.startswith("Indisputably")
+
+
+def test_era_c_title_case_held_ignored_when_upper_case_held_exists(settings):
+    text = SINGLE_POINT_C.replace(
+        "Direction to grant affiliation. [Para 9]",
+        "Direction to grant affiliation.\nHELD: 1. Affiliation must be granted. [Para 9]",
+    )
+    z = zone(parsed_from_text("2021_4_274_278", Era.C, text), settings)
+    assert [hp.text.split(".")[0] for hp in z.editorial] == ["1"]
