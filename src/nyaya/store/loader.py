@@ -178,6 +178,10 @@ def judgment_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
             row["decision_year"] = row["decision_date"].year
         row["position_map"] = _as_position_map(rec.get("position_map"))
         row["has_pdf"] = bool(row["has_pdf"])
+        # a year with rows lacking a PDF stores these as float (NaN for null)
+        for col in ("pages", "offset_data", "byte_size", "decision_year"):
+            if row[col] is not None:
+                row[col] = int(row[col])
         rows.append(row)
     return rows
 
