@@ -1427,6 +1427,20 @@ to.
         `qwen/qwen3.8-27b` on Groq (Qwen family, still different from the
         answer model). Gemini Flash returns once a free-tier key is
         available; only `.env` changes.
+*   **Rerank latency (decided 2026-11-13, Phase 1 integration):** reranking
+    100 candidates took about 7.4 s on the RTX 2060 (6 GB) in the
+    store-search work, against a 15 s answer target. Decision:
+    `retrieval.rerank_candidates` 100 → 50; `encoders.rerank_batch_size` = 4
+    (a setting now); the reranker loads with `attn_implementation="sdpa"`.
+    *   **Measured 2026-11-13** on 100 real 2025 judgment chunks (median of
+        3 runs, batch 4, peak VRAM 3.5–3.8 GB): sdpa 6.9 s for 50 and
+        14.2 s for 100; eager attention 10.3 s and 15.9 s. Sdpa is kept.
+        The 7.4 s for 100 was not reproduced (the laptop GPU ran at about
+        75 °C during the run, with the CPU busy parsing), so 50 candidates
+        is the right cap for now.
+    *   **Still open:** whether recall@50 drops when the reranker sees 50
+        instead of 100 candidates; `nyaya-eval retrieval` on `dev_v1`
+        (Phase 2) answers it, and G7 latency is measured in Phase 3.
 
 --------------------------------------------------------------------------------
 
