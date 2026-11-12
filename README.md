@@ -1,10 +1,10 @@
 # Nyaya Search
 
-Nyaya Search is a research assistant for lawyers that works over Indian Supreme Court judgments. Every sentence in an answer cites a retrieved passage and quotes it word for word, and code checks that each quote matches the source. If no passage supports an answer, the system says that no relevant judgment was found. The stack is free to run: PostgreSQL with pgvector, local embedding (Qwen3-Embedding-0.6B) and reranking (Qwen3-Reranker-0.6B), and a free hosted LLM.
+Nyaya Search is a research assistant for lawyers that works over Indian Supreme Court judgments. Every sentence in an answer cites a retrieved passage and quotes it word for word, and code checks that each quote matches the source. If no passage supports an answer, the system says that no relevant judgment was found. The stack is free to run: PostgreSQL with pgvector, local embedding (Qwen3-Embedding-0.6B) and reranking (Qwen3-Reranker-0.6B), and a free hosted LLM. The one paid part is an optional fallback reranker (Cohere via OpenRouter), used only if the local reranker fails.
 
 ## Status
 
-Design under review. No application code yet.
+Design revised after external review. No application code yet. Two decisions remain open (see the design's Open Questions).
 
 - Design: [docs/designs/nyaya_search.md](docs/designs/nyaya_search.md)
 - Review summary: [docs/reviews/consolidated_review_report.md](docs/reviews/consolidated_review_report.md)
