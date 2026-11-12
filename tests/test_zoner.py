@@ -177,3 +177,40 @@ def test_era_c_lower_case_jurisdiction_line_in_held_is_not_the_judgment(settings
     z = zone(doc, settings)
     assert span_text(doc, z.judgment_span).startswith("CRIMINAL APPELLATE JURISDICTION")
     assert z.editorial[0].para_refs == ["3"]
+
+
+def test_era_c_per_judge_blocks_under_one_held(settings):
+    # 2012_11_585_682: one HELD, a "PER ..." line, then numbering restarting per opinion
+    text = (
+        "A v. B\n[ALTAMAS KABIR, CJI, P. SATHASIVAM AND J. CHELAMESWAR, JJ.]\n"
+        "Constitution of India, 1950 – Art. 71.\n"
+        "HELD: PER ALTAMAS KABIR, CJI (for himself and for P.\nSATHASIVAM, J.)\n"
+        "1.1. Clause (1) of Art. 71 provides. [Para 47]\n"
+        "1.2. In view of sub-s. (3). [Para 48]\n"
+        "Per J. CHELAMESWAR, J. (Concurring):\n"
+        "1.1. The short question. [Para 2]\n"
+        "2.1. Under the provisions. [Para 11]\n"
+        "ClVILAPPELLATE JURISDICTION: Civil Appeal Nos. 1 of 2012.\nX, J. 1. T.\n"
+    )
+    doc = parsed_from_text("2012_11_585_682", Era.C, text)
+    z = zone(doc, settings)
+    assert [hp.para_refs for hp in z.editorial] == [["47"], ["48"], ["2"], ["11"]]
+    assert z.editorial[0].text.startswith("1.1. Clause")
+    assert span_text(doc, z.judgment_span).startswith("ClVILAPPELLATE JURISDICTION")
+
+
+def test_era_c_judgment_falls_back_to_delivered_by_line(settings):
+    text = (
+        "A v. B\n[KURIAN JOSEPH AND R. BANUMATHI, JJ.J\nContempt of Courts Act, 1971 - s.19.\n"
+        "HELD: 1. A point. [Para 6]\nCIVIL APPELLATE JURISDICATION: Civil Appeal No. 1\n"
+        "The Judgment of the Court was delivered by\nKURIAN, J. 1. Leave granted.\n"
+    )
+    doc = parsed_from_text("2017_11_1036_1041", Era.C, text)
+    z = zone(doc, settings)
+    assert span_text(doc, z.header_span).endswith("R. BANUMATHI, JJ.J")
+    assert span_text(doc, z.judgment_span).startswith("CIVIL APPELLATE JURISDICATION")
+    text2 = text.replace("CIVIL APPELLATE JURISDICATION: Civil Appeal No. 1\n", "")
+    z2 = zone(parsed_from_text("2017_11_1036_1041", Era.C, text2), settings)
+    assert text2[z2.judgment_span[0] :].startswith("The Judgment of the Court was delivered by")
+    assert Zone.JUDGMENT not in z2.missing
+    assert z.acts == ["Contempt of Courts Act, 1971"]

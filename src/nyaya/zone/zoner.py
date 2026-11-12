@@ -50,15 +50,21 @@ _D_HELD = re.compile(r"^[ \t]*Held\s*:", _F)
 # Searched only before the first HELD (and in the first BENCH_WINDOW characters),
 # so a running head "[DEEPAK GUPTA, J.]" deep in the judgment is never taken.
 # "(" and ")" are OCR forms of the brackets in scanned years.
-_C_BENCH = re.compile(r"[\[(][^\[\]()]{0,300}?(?:J\.|JJ\.|CJI\.?)\s*[\])]?[ \t]*$", _F)
+_C_BENCH = re.compile(
+    r"[\[(][^\[\]()]{0,300}?(?:J\.|JJ\.|CJI\.?)\s*[\])J]?[ \t]*$", _F
+)  # "JJ.J": OCR "]"
 BENCH_WINDOW = 4000
+# Fallback start of the judgment zone when no jurisdiction line is found.
+_C_DELIVERED = re.compile(r"^[ \t]*The Judgments? of the Court (?:was|were) delivered by", _F)
 # Upper case only: catchwords say "On appeal, held:" in lower case.
 _C_HELD = re.compile(r"HELD\s*:")
 _C_CASE_LAW = re.compile(r"^[ \t]*Case Law Reference[ \t]*$", _F)
 _C_JURISDICTION = re.compile(
     # Upper case only (a Held line may start "criminal court has no jurisdiction"),
-    # and no \b after the first word: OCR drops spaces ("CIVILAPPELLATEJURISDICTION").
-    r"^[ \t]*(?:CIVIL|CRIMINAL|ORIGINAL|WRIT|APPELLATE)[A-Z \t()/&,.\-]*JURISDICTION",
+    # no \b after the first word (OCR drops spaces: "CIVILAPPELLATEJURISDICTION"),
+    # and "l" or "1" for "I" (OCR: "ClVILAPPELLATE JURISDICTION").
+    r"^[ \t]*(?:C[Il1]V[Il1]L|CR[Il1]M[Il1]NAL|OR[Il1]G[Il1]NAL|WR[Il1]T|APPELLATE)"
+    r"[A-Z \t()/&,.\-Il1]*JUR[Il1]SD[A-Z]*",  # "JURISDICATION" (sic) is seen
     re.MULTILINE,
 )
 # Era C Held point numbers ("1.", "1.1", "2.3"); case-sensitive lookahead.
@@ -66,6 +72,8 @@ _C_JURISDICTION = re.compile(
 # number inside a line is a citation volume or a witness ("(2018) 2 SCC 357").
 _C_POINT = re.compile(r"(?:^|(?<=\s))(\d{1,2}(?:\.\d{1,2})?)\.?\s+(?=[A-Z])")
 _LINE_START = re.compile(r"(?:^|\n)[ \t]*$")
+_PER = re.compile(r"^[ \t]*Per\b", re.IGNORECASE | re.MULTILINE)
+FIRST_POINT_WINDOW = 300
 
 # --- paragraph links -------------------------------------------------------------
 
@@ -348,7 +356,13 @@ def _held_point(text: str, start: int, end: int) -> HeldPoint | None:
 
 
 def _era_c_points(text: str, start: int, end: int) -> list[HeldPoint]:
-    """Held points of one Era C HELD block over text[start:end]."""
+    """Held points of one Era C HELD block over text[start:end].
+
+    Numbers must run in order. The first follows "HELD:" directly or starts a
+    line within FIRST_POINT_WINDOW characters (after "PER X, J. (for himself
+    ...)"); numbering restarts at 1 after a line starting "Per" (a new opinion's
+    Held points under the same HELD).
+    """
     cuts: list[int] = []
     major, minor = 0, 0
     for m in _C_POINT.finditer(text, start, end):
@@ -356,10 +370,15 @@ def _era_c_points(text: str, start: int, end: int) -> list[HeldPoint]:
         a, _, b = label.partition(".")
         ma, mi = int(a), int(b) if b else 0
         ok = (ma == major + 1 and mi in (0, 1)) or (ma == major and mi == minor + 1 and major)
+        at_line_start = _LINE_START.search(text, max(0, m.start(1) - 20), m.start(1)) is not None
         if not cuts:
-            ok = ok and m.start(1) - start <= 3  # the first number follows "HELD:" directly
+            ok = ok and (
+                m.start(1) - start <= 3
+                or (at_line_start and m.start(1) - start <= FIRST_POINT_WINDOW)
+            )
         else:
-            ok = ok and _LINE_START.search(text, max(0, m.start(1) - 20), m.start(1)) is not None
+            restart = ma == 1 and mi in (0, 1) and _PER.search(text, cuts[-1], m.start(1))
+            ok = (ok or bool(restart)) and at_line_start
         if ok:
             cuts.append(m.start(1))
             major, minor = ma, mi
@@ -389,7 +408,7 @@ def _zone_era_c(text: str, settings: Settings, aliases: Mapping[str, str]) -> Zo
         missing.append(Zone.HEADER)
     helds = list(_C_HELD.finditer(text, ed_start))
     search_from = helds[0].end() if helds else ed_start
-    juris = _first(_C_JURISDICTION, text, search_from)
+    juris = _first(_C_JURISDICTION, text, search_from) or _first(_C_DELIVERED, text, search_from)
     case_law = _first(_C_CASE_LAW, text, search_from)
     if case_law and juris and case_law.start() > juris.start():
         case_law = None
