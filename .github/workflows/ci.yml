@@ -34,7 +34,7 @@ jobs:
       # this installs the CPU build (no CUDA wheels). --locked fails if
       # uv.lock is out of date with pyproject.toml.
       - name: Install dependencies
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra dev --extra eval
 
       - name: Lint
         run: uv run ruff check .
