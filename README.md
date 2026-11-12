@@ -21,6 +21,22 @@ python scripts/download_sc.py --dest docs --skip-regional
 
 The data is not in this repository.
 
+## Running the API and page
+
+Set up the environment once with `uv sync --extra dev --extra eval`, copy `.env.example` to `.env` and fill in `DATABASE_URL` and the LLM keys. The API needs an active index (see the build steps in the design).
+
+```
+uv run nyaya-api              # serves http://127.0.0.1:8000
+uv run nyaya-api --port 8080
+```
+
+The server binds 127.0.0.1 only. It loads the settings and models once at startup.
+
+- `POST /ask` takes `{"question": "...", "filters": {"year_from", "year_to", "judge", "act", "outcome"}}` (filters optional) and returns an `AskResponse` (see `contracts/schema.json`). Each request has a hard limit of `timeouts.request_s` (30) seconds; past it the status is `error`.
+- `GET /judgment/{path}?highlight={chunk_id}` returns the judgment record plus the highlighted chunk's `char_start` and `char_end`. Opened in a browser (from a citation link), the same URL shows the judgment text with the passage marked.
+- `GET /health` returns the active index version, whether the models are loaded, whether the fallback reranker is configured, and the standing notices.
+- `/` serves the page in `web/` (plain HTML, CSS and JavaScript; no build step).
+
 ## Repository layout
 
 - `scripts/`
