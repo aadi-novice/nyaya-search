@@ -1900,6 +1900,21 @@ to.
     *   **No paragraph numbers:** falls back to blank-line paragraphs.
     *   **Fields:** `section_label` from headings in capitals; pages from
         the position map; the header from metadata.
+    *   **Changed 2026-11-13 (chunker `ch3`):**
+        *   **Paragraph numbers** are the longest in-order sequence of
+            numbered lines (each step +1, a sub-paragraph, or a skip of at
+            most 10), not the first acceptable line each time. Taken
+            greedily, a numbered paragraph quoted from another judgment
+            ("22." inside para 12) captured the label of every later
+            paragraph: in `p1-2025a` (`ch1`), 362 of 896 judgments had fewer
+            distinct paragraph labels than their highest label, 95 of them
+            missing over 20%. A numbered line outside the chosen sequence
+            stays body text of the paragraph it sits in.
+        *   **A Held point over `chunk.max_words`** is split at sentence
+            boundaries like a long paragraph (flag `recursive_split`); every
+            piece keeps the point's `para_refs`. Some Era C headnotes run to
+            thousands of words (one to 150,000 when the judgment start was
+            not found), which failed `over_model_limit`.
 
 #### 23. `src/nyaya/chunk/metrics.py` (Create, Phase 1)
 
