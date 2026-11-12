@@ -1915,6 +1915,12 @@ to.
             piece keeps the point's `para_refs`. Some Era C headnotes run to
             thousands of words (one to 150,000 when the judgment start was
             not found), which failed `over_model_limit`.
+        *   **`ch4`:** a paragraph number may follow OCR specks and a lone
+            margin letter at the line start ("· 11.", ".. . 55.", "·A 25.").
+            On 2014 this cut judgments with label gaps from 376 to 279 of
+            781 (whole-text estimate). Many remaining Era C gaps are OCR
+            damage to the number itself; most remaining Era D gaps are
+            judgments that print "Leave granted." without a "1.".
 
 #### 23. `src/nyaya/chunk/metrics.py` (Create, Phase 1)
 
