@@ -504,6 +504,14 @@ def _zone_era_c(
 
 # --- Era B -----------------------------------------------------------------------
 
+# The bench line when OCR breaks the Era C form: "JJ,]", "JJ.].", "JJ.J" or
+# "JJ � J" at the end, or no opening bracket ("tS. MURTAZA FAZAL ALI, ...
+# JJ.J"). A line ending in "JJ" or "C.J.", or "J." with a closing bracket.
+_B_BENCH = re.compile(
+    r"^[^\n]*(?:\bJ[ \t]?J[ \t]?[.,]?[ \t]?[\])J}]?|\bJ[ \t]?[.,][ \t]?[\])}]"
+    r"|\bC[ \t]?\.?[ \t]?J[ \t]?I?[ \t]?[.,]?[ \t]?[\])}])[^\w\n]{0,4}$",
+    re.MULTILINE,
+)
 # "HELD:" with the OCR forms of 1965-2009 scans: "HELB :", "HBLD:", "HELD;".
 _B_HELD = re.compile(r"\bH[EB][LI1][DB][ \t]*[:;]")
 # The jurisdiction line with OCR damage: "CtVIL APPELLATE JURISDICTION",
@@ -620,7 +628,7 @@ def _zone_era_b(
     )
     first_held = held_rx.search(text) if held_rx else None
     limit = min(BENCH_WINDOW, first_held.start() if first_held else n)
-    bench = _C_BENCH.search(text, 0, limit)
+    bench = _C_BENCH.search(text, 0, limit) or _B_BENCH.search(text, 0, limit)
     if bench:
         header_span = (0, bench.end())
         ed_start = _line_end(text, bench.end())
