@@ -863,6 +863,213 @@
       "title": "SearchHit",
       "type": "object"
     },
+    "SearchPassage": {
+      "additionalProperties": false,
+      "description": "One ranked passage from POST /search: every PassageRef field, plus these.",
+      "properties": {
+        "case_name": {
+          "title": "Case Name",
+          "type": "string"
+        },
+        "chunk_id": {
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "decision_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision Date"
+        },
+        "judgment_id": {
+          "title": "Judgment Id",
+          "type": "string"
+        },
+        "neutral_citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Neutral Citation"
+        },
+        "opinion_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpinionType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pages": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "paras": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paras"
+        },
+        "rank": {
+          "title": "Rank",
+          "type": "integer"
+        },
+        "rerank_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Score"
+        },
+        "scr_citation": {
+          "title": "Scr Citation",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "zone": {
+          "$ref": "#/$defs/Zone"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "judgment_id",
+        "case_name",
+        "scr_citation",
+        "pages",
+        "zone",
+        "rank",
+        "text"
+      ],
+      "title": "SearchPassage",
+      "type": "object"
+    },
+    "SearchResponse": {
+      "additionalProperties": false,
+      "description": "POST /search: the ranked passages /ask would answer from, with no LLM call.\n\nstatus: `passages` (top score at or above the refusal threshold, or a\ncitation lookup); `refused` (no candidates, or the top score is below the\nthreshold: the passages are then the nearest ones); `no_match_with_filters`;\n`error`.",
+      "properties": {
+        "filters_applied": {
+          "additionalProperties": true,
+          "title": "Filters Applied",
+          "type": "object"
+        },
+        "notices": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notices",
+          "type": "array"
+        },
+        "passages": {
+          "items": {
+            "$ref": "#/$defs/SearchPassage"
+          },
+          "title": "Passages",
+          "type": "array"
+        },
+        "passages_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Passages Note"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/$defs/Route"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        },
+        "timings_ms": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Timings Ms",
+          "type": "object"
+        },
+        "top_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top Score"
+        },
+        "versions": {
+          "$ref": "#/$defs/Versions"
+        }
+      },
+      "required": [
+        "request_id",
+        "status",
+        "notices",
+        "route",
+        "filters_applied",
+        "versions",
+        "timings_ms"
+      ],
+      "title": "SearchResponse",
+      "type": "object"
+    },
     "Status": {
       "enum": [
         "answered",

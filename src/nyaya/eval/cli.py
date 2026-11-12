@@ -3,7 +3,7 @@
 Subcommands and the phase in which each is first needed:
 
     build-devset    Phase 1   development questions from Held points
-    g6-holdout      Phase 2   (not built yet)
+    g6-holdout      Phase 2   held-out PDFs laid out for the G6 hand check
     retrieval       Phase 2   recall@5 / recall@50 / MRR per method (G3)
     size-steps      Phase 2   G4 size steps in temporary schemas
     bm25-trigger    Phase 2   Postgres full-text search against bm25s
@@ -16,7 +16,8 @@ Subcommands and the phase in which each is first needed:
     lawyer-import   Phase 3   the lawyer's ratings into eval_runs (never a gate)
 
 Exit codes: 0 success; 1 a gate failed (size-steps, answers, latency,
-judge-validate); 2 usage or setup error. An `answers` session that stops
+judge-validate); 2 usage or setup error (g6-holdout: also fewer in-scope PDFs
+than asked for). An `answers` session that stops
 early (free quota used up, or --limit) exits 0 and prints how to resume.
 """
 
@@ -33,9 +34,6 @@ from nyaya.config import ConfigError, Settings, load_settings
 from nyaya.eval.datasets import DATASETS_DIR, DevItem, read_jsonl
 from nyaya.eval.retrieval import METHODS
 
-NOT_BUILT = {
-    "g6-holdout": "Phase 2",
-}
 SETS = ("dev", "unanswerable", "adversarial")
 
 
@@ -66,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--out", type=Path, default=DATASETS_DIR / "dev_v1.jsonl")
     b.add_argument("--size", type=int, default=None, help="default: devset.size")
     b.add_argument("--retries", type=int, default=1)
+
+    g = sub.add_parser("g6-holdout", help="held-out PDFs for the G6 hand check (Phase 2)")
+    g.add_argument("--years", type=parse_years, default=parse_years("2010-2026"))
+    g.add_argument("--out", type=Path, default=None, help="default: eval/runs/g6_holdout")
+    g.add_argument("--size", type=int, default=None, help="default: g6.holdout_size")
+    g.add_argument("--dpi", type=int, default=None, help="page image resolution (default 110)")
 
     r = sub.add_parser("retrieval", help="G3 retrieval metrics per method")
     r.add_argument("--dataset", type=Path, default=DATASETS_DIR / "dev_v1.jsonl")
@@ -114,9 +118,6 @@ def build_parser() -> argparse.ArgumentParser:
     li = sub.add_parser("lawyer-import", help="the lawyer's ratings into eval_runs (Phase 3)")
     li.add_argument("--run-id", default=None, help="the answers run (default: the latest)")
     li.add_argument("--csv", type=Path, default=None, help="default: <export dir>/ratings.csv")
-
-    for name, phase in NOT_BUILT.items():
-        sub.add_parser(name, help=f"{phase} (not built yet)")
     return p
 
 
@@ -164,6 +165,23 @@ def cmd_build_devset(args: argparse.Namespace, settings: Settings) -> int:
         }
     )
     return 2 if result.aborted else 0
+
+
+def cmd_g6_holdout(args: argparse.Namespace, settings: Settings) -> int:
+    from nyaya.corpus.manifest import load_manifest
+    from nyaya.eval.g6_holdout import DEFAULT_DPI, DEFAULT_OUT, run_holdout
+
+    result = run_holdout(
+        load_manifest(settings),
+        settings,
+        args.years,
+        args.out or DEFAULT_OUT,
+        size=args.size,
+        dpi=args.dpi or DEFAULT_DPI,
+    )
+    _print(result.summary())
+    wanted = settings.g6.holdout_size if args.size is None else args.size
+    return 0 if len(result.reviewed) == wanted else 2
 
 
 def _connect(settings: Settings) -> Any:
@@ -600,6 +618,7 @@ def cmd_lawyer_import(args: argparse.Namespace, settings: Settings) -> int:
 
 COMMANDS = {
     "build-devset": cmd_build_devset,
+    "g6-holdout": cmd_g6_holdout,
     "retrieval": cmd_retrieval,
     "size-steps": cmd_size_steps,
     "bm25-trigger": cmd_bm25_trigger,
@@ -626,12 +645,6 @@ def _print(obj: Any) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command in NOT_BUILT:
-        print(
-            f"nyaya-eval {args.command}: not built yet ({NOT_BUILT[args.command]})",
-            file=sys.stderr,
-        )
-        return 2
     try:
         settings = load_settings()
         return COMMANDS[args.command](args, settings)

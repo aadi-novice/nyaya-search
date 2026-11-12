@@ -52,6 +52,13 @@ def _revision(rev: str) -> str | None:
     return rev or None
 
 
+def _dtype(device: str) -> Any:
+    """float16 on the GPU; float32 on the CPU, where half precision is slow or unsupported."""
+    import torch
+
+    return torch.float16 if device.startswith("cuda") else torch.float32
+
+
 # --- embedder ----------------------------------------------------------------------
 
 
@@ -68,14 +75,13 @@ class Embedder:
         self.query_prefix = settings.embed.query_prefix
         self.dim = settings.embed.dim
         if model is None:
-            import torch
             from sentence_transformers import SentenceTransformer
 
             model = SentenceTransformer(
                 self.model_name,
                 revision=_revision(settings.embed.revision),
                 device=device,
-                model_kwargs={"dtype": torch.float16},
+                model_kwargs={"dtype": _dtype(device)},
                 processor_kwargs={"padding_side": "left"},
             )
         self.model = model
@@ -171,7 +177,6 @@ class QwenReranker:
         self.max_length = max_length
         self.device = device
         if tokenizer is None or model is None:
-            import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             rev = _revision(settings.rerank.revision)
@@ -181,7 +186,7 @@ class QwenReranker:
             extra = {"attn_implementation": attn_implementation} if attn_implementation else {}
             model = (
                 AutoModelForCausalLM.from_pretrained(
-                    self.model_name, revision=rev, dtype=torch.float16, **extra
+                    self.model_name, revision=rev, dtype=_dtype(device), **extra
                 )
                 .to(device)
                 .eval()
@@ -406,23 +411,26 @@ def startup_check(
     build_dir: Path | str | None = None,
     *,
     cuda_available: Callable[[], bool] | None = None,
+    require_cuda: bool = True,
 ) -> dict[str, Any]:
-    """Assert CUDA, then compare Kaggle reference vectors when they exist.
+    """Assert CUDA (unless `require_cuda` is False: the CPU deployment), then compare
+    Kaggle reference vectors when they exist.
 
-    Returns a small report: {"cuda": True, "reference_checked": bool,
+    Returns a small report: {"cuda": bool, "reference_checked": bool,
     "min_cosine": float | None}. Raises EncoderCheckError on failure.
     """
     if cuda_available is None:
         import torch
 
         cuda_available = torch.cuda.is_available
-    if not cuda_available():
+    cuda = bool(cuda_available())
+    if require_cuda and not cuda:
         raise EncoderCheckError("CUDA is not available; the encoders need the local GPU")
     build = Path(build_dir) if build_dir is not None else Path(settings.paths.build)
     ref_dir = build / REFERENCE_DIR
     passages, vectors = ref_dir / "passages.json", ref_dir / "vectors.npy"
     if not (passages.exists() and vectors.exists()):
-        return {"cuda": True, "reference_checked": False, "min_cosine": None}
+        return {"cuda": cuda, "reference_checked": False, "min_cosine": None}
     if embedder is None:
         raise EncoderCheckError("reference vectors exist but no embedder was given")
     texts = _reference_texts(passages)
@@ -441,4 +449,4 @@ def startup_check(
             f"local embedder disagrees with the Kaggle reference vectors: min cosine {worst:.5f}"
             f" < {settings.encoder_check.min_cosine}"
         )
-    return {"cuda": True, "reference_checked": True, "min_cosine": worst}
+    return {"cuda": cuda, "reference_checked": True, "min_cosine": worst}

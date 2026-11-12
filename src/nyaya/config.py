@@ -13,7 +13,7 @@ import json
 import tomllib
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -250,7 +250,8 @@ class OutcomeMap(_Section):
 
 
 class Secrets(BaseSettings):
-    """Secrets from the environment and `.env`. Empty values count as unset."""
+    """Secrets (and the one deployment switch) from the environment and `.env`.
+    Empty values count as unset."""
 
     model_config = SettingsConfigDict(
         extra="ignore", env_ignore_empty=True, case_sensitive=False, frozen=True
@@ -265,6 +266,9 @@ class Secrets(BaseSettings):
     judge_model: str | None = None
     openrouter_api_key: SecretStr | None = None
     hf_home: str | None = None
+    # where the API runs the embedder and reranker: the local GPU, or the CPU
+    # (the Docker image; slower, for demos without a GPU)
+    nyaya_device: Literal["cuda", "cpu"] = "cuda"
 
 
 class Settings(_Section):

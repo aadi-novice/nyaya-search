@@ -32,6 +32,8 @@ def test_export_json_schema_writes_file(tmp_path):
         "UnverifiedSentence",
         "AskRequest",
         "AskResponse",
+        "SearchPassage",
+        "SearchResponse",
         "Filters",
         "Versions",
         "SearchHit",

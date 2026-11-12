@@ -293,6 +293,37 @@ class AskResponse(Contract):
     timings_ms: dict[str, float]  # per stage
 
 
+class SearchPassage(PassageRef):
+    """One ranked passage from POST /search: every PassageRef field, plus these."""
+
+    rank: int  # 1 = best
+    rerank_score: float | None = None  # None on the citation-lookup route
+    text: str  # the chunk's clean text (the text quotes are checked against)
+    decision_date: date | None = None
+
+
+class SearchResponse(Contract):
+    """POST /search: the ranked passages /ask would answer from, with no LLM call.
+
+    status: `passages` (top score at or above the refusal threshold, or a
+    citation lookup); `refused` (no candidates, or the top score is below the
+    threshold: the passages are then the nearest ones); `no_match_with_filters`;
+    `error`.
+    """
+
+    request_id: str
+    status: Status
+    passages: list[SearchPassage] = Field(default_factory=list)
+    passages_note: str | None = None
+    top_score: float | None = None
+    threshold: float | None = None  # the refusal threshold in force (hybrid route)
+    notices: list[str]
+    route: Route
+    filters_applied: dict[str, Any]
+    versions: Versions
+    timings_ms: dict[str, float]
+
+
 # --- search ----------------------------------------------------------------------
 
 
@@ -319,6 +350,8 @@ SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     UnverifiedSentence,
     AskRequest,
     AskResponse,
+    SearchPassage,
+    SearchResponse,
     Filters,
     Versions,
     SearchHit,

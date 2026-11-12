@@ -25,6 +25,8 @@ from nyaya.contracts import (
     OpinionType,
     PassageRef,
     Route,
+    SearchPassage,
+    SearchResponse,
     Status,
     UnverifiedReason,
     UnverifiedSentence,
@@ -153,6 +155,35 @@ CHUNK = ChunkRecord(
 )
 
 
+def search_response(status: Status, **fields: Any) -> SearchResponse:
+    base: dict[str, Any] = {
+        "request_id": "srch-1",
+        "status": status,
+        "notices": NOTICES,
+        "route": Route.HYBRID,
+        "filters_applied": {},
+        "versions": versions(),
+        "timings_ms": {"embed": 5.0, "rerank": 30.0, "total": 40.0},
+    }
+    return SearchResponse(**(base | fields))
+
+
+SEARCHED = search_response(
+    Status.PASSAGES,
+    passages=[
+        SearchPassage(
+            **passage(14).model_dump(),
+            rank=1,
+            rerank_score=0.91,
+            text="13. The dispute is civil in nature.",
+            decision_date=date(2025, 1, 6),
+        )
+    ],
+    top_score=0.91,
+    threshold=0.35,
+)
+
+
 class FakeBackend:
     """Returns canned responses chosen by the question text."""
 
@@ -166,6 +197,7 @@ class FakeBackend:
         }
         self.release = threading.Event()
         self.asked: list[AskRequest] = []
+        self.searched: list[AskRequest] = []
         self.traces: list[tuple[AskRequest, AskResponse, str | None]] = []
         self.fail_trace = False
 
@@ -177,6 +209,17 @@ class FakeBackend:
         if request.question == "boom":
             raise RuntimeError("database went away")
         return self.by_question[request.question]
+
+    def search(self, request: AskRequest) -> SearchResponse:
+        self.searched.append(request)
+        if request.question == "slow":
+            self.release.wait(5)
+        if request.question == "boom":
+            raise RuntimeError("database went away")
+        if request.question == "filtered":
+            filters = request.filters.model_dump(exclude_none=True) if request.filters else {}
+            return search_response(Status.NO_MATCH_WITH_FILTERS, filters_applied=filters)
+        return SEARCHED
 
     def get_judgment(self, path: str) -> JudgmentRecord | None:
         return JUDGMENT if path == JUDGMENT.path else None
@@ -323,6 +366,56 @@ def test_invalid_request_is_rejected(client: TestClient) -> None:
     assert client.post("/ask", json=bad_years).status_code == 422
 
 
+# --- POST /search -------------------------------------------------------------------
+
+
+def search(client: TestClient, question: str, **body: Any) -> dict[str, Any]:
+    r = client.post("/search", json={"question": question, **body})
+    assert r.status_code == 200, r.text
+    SearchResponse.model_validate(r.json())  # the wire format is the contract
+    return r.json()
+
+
+def test_search_returns_ranked_passages(client: TestClient, backend: FakeBackend) -> None:
+    data = search(client, "civil fir")
+    assert data["status"] == "passages"
+    (p,) = data["passages"]
+    assert (p["rank"], p["rerank_score"], p["chunk_id"]) == (1, 0.91, CHUNK.chunk_id)
+    assert p["text"].startswith("13.") and p["decision_date"] == "2025-01-06"
+    assert data["threshold"] == 0.35 and data["notices"] == NOTICES
+    assert backend.asked == []  # /search never reaches the answer path
+    assert backend.traces == []
+
+
+def test_search_passes_filters(client: TestClient, backend: FakeBackend) -> None:
+    filters = {"year_from": 2018, "year_to": 2026, "act": "Code of Criminal Procedure"}
+    data = search(client, "filtered", filters=filters)
+    assert data["status"] == "no_match_with_filters"
+    assert data["filters_applied"] == filters
+    assert backend.searched[-1].filters is not None
+    assert backend.searched[-1].filters.year_from == 2018
+
+
+def test_search_timeout_and_failure_are_clean_errors(
+    client: TestClient, backend: FakeBackend
+) -> None:
+    data = search(client, "slow", filters={"judge": "Abhay S. Oka"})
+    assert data["status"] == "error" and data["passages"] == []
+    assert data["notices"][0].startswith("The request took longer than")
+    assert data["filters_applied"] == {"judge": "Abhay S. Oka"}
+    backend.release.set()
+    data = search(client, "boom")
+    assert data["status"] == "error"
+    assert "database went away" not in " ".join(data["notices"])
+    assert backend.traces == []  # /search is never traced
+
+
+def test_search_rejects_invalid_requests(client: TestClient) -> None:
+    assert client.post("/search", json={"question": ""}).status_code == 422
+    bad_years = {"question": "x", "filters": {"year_from": 2026, "year_to": 2018}}
+    assert client.post("/search", json=bad_years).status_code == 422
+
+
 # --- GET /judgment/{path} ------------------------------------------------------------
 
 
@@ -422,6 +515,8 @@ def test_main_binds_localhost(monkeypatch: pytest.MonkeyPatch, backend: FakeBack
     app_module.main(["--port", "8123"])
     assert seen["host"] == "127.0.0.1"
     assert seen["port"] == 8123
+    app_module.main(["--host", "0.0.0.0"])  # the Docker image, inside its container
+    assert seen["host"] == "0.0.0.0"
 
 
 def test_error_response_survives_a_versions_failure(
@@ -467,6 +562,8 @@ def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = types.ModuleType("nyaya.pipeline")
     pipeline.build_deps = lambda settings: deps  # type: ignore[attr-defined]
     pipeline.ask = lambda request, d: (calls.append(("ask", d)), ANSWERED)[1]  # type: ignore[attr-defined]
+    pipeline.search = lambda request, d: SEARCHED  # type: ignore[attr-defined]
+    pipeline.RetrievalCache = lambda: "cache"  # type: ignore[attr-defined]
     trace = types.ModuleType("nyaya.trace")
     trace.record_from_response = lambda req, resp, error=None: ("record", error)  # type: ignore[attr-defined]
     trace.write_trace = lambda connect, record: calls.append(("trace", connect, record))  # type: ignore[attr-defined]
@@ -480,6 +577,8 @@ def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     b = PipelineBackend(load_settings(env_file=None))
     req = AskRequest(question="q")
     assert b.ask(req) is ANSWERED
+    assert b.search(req) is SEARCHED
+    assert deps.retrieval_cache == "cache"
     assert b.get_judgment(JUDGMENT.path) is JUDGMENT
     assert b.get_judgment("nope") is None
     assert b.get_chunk(CHUNK.chunk_id) is CHUNK
@@ -488,3 +587,13 @@ def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     assert b.versions() == versions()
     b.write_trace(req, ANSWERED, "timeout")
     assert calls == [("ask", deps), ("trace", "connect-fn", ("record", "timeout"))]
+
+
+def test_page_searches_before_it_asks() -> None:
+    """The page shows /search passages first, then renders the /ask answer."""
+    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    start = js.index("async function onSubmit")
+    body = js[start : js.index("\n}\n", start)]
+    assert 0 <= body.index('post("/search"') < body.index('post("/ask"')
+    # citation chips find their passage card by chunk_id
+    assert "focusSource(c.chunk_id, c.quote)" in js
