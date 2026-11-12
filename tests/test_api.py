@@ -434,7 +434,7 @@ def test_error_response_survives_a_versions_failure(
     data = ask(client, "boom")
     assert data["status"] == "error"
     assert data["versions"]["index_version"] == "unknown"
-    assert data["versions"]["config_version"] == "cfg1"
+    assert data["versions"]["config_version"] == load_settings(env_file=None).versions.config
 
 
 def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
