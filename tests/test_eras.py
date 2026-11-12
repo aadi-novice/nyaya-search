@@ -46,9 +46,11 @@ def test_era_d_ignores_decision_year():
     assert classify(ERA_D_TEXT, 2019, MARKERS) is Era.D
 
 
-def test_two_d_labels_are_not_enough():
+def test_two_d_labels_are_enough_one_is_not():
+    # min_count 2: long headnotes push the other labels past page 3
     text = "Issue for Consideration\nHeadnotes\nHeld: x"
-    assert classify(text, 2025, MARKERS) is Era.OUT_OF_SCOPE
+    assert classify(text, 2025, MARKERS) is Era.D
+    assert classify("Issue for Consideration\nHeld: x", 2025, MARKERS) is Era.OUT_OF_SCOPE
 
 
 def test_era_c():
@@ -79,10 +81,10 @@ def test_era_c_held_allows_space_before_colon():
     assert classify(ERA_C_TEXT.replace("HELD:", "HELD :"), 2015, MARKERS) is Era.C
 
 
-def test_era_c_needs_five_margin_lines():
-    lines = [ln for ln in ERA_C_TEXT.splitlines() if ln.strip() not in {"A", "B"}]
+def test_era_c_needs_three_margin_lines():
+    lines = [ln for ln in ERA_C_TEXT.splitlines() if ln.strip() not in {"A", "B", "C", "D"}]
     text = "\n".join(lines)
-    assert count_margin_lines(text, MARKERS) == 4
+    assert count_margin_lines(text, MARKERS) == 2
     assert classify(text, 2015, MARKERS) is Era.OUT_OF_SCOPE
 
 

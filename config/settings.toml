@@ -46,11 +46,18 @@ labels = [
     "List of Acts",
     "List of Keywords",
 ]
-min_count = 3
+# 2 (was 3), 2026-11-13: long 2024-2026 headnotes push the last three labels
+# past page 3, and the late-2023 "CASE DETAILS" volumes print only "Issue for
+# consideration" and "HEADNOTES". In an 80-per-year sample no 2010-2023 Era C
+# judgment showed any label, so 2 cannot pull in Era C.
+min_count = 2
 
 [era_markers.c]
 margin_line_regex = '^\s*[A-H]\s*$'
-min_margin_lines = 5
+# 3 (was 5), 2026-11-13: OCR of some 2010-2016 scans joins margin letters to
+# the body line, leaving 3-4 lone letters on the first pages (15% of a 2015
+# sample). HELD and the year window still have to match.
+min_margin_lines = 3
 held_regex = 'HELD\s*:'
 year_from = 2010
 year_to = 2023
