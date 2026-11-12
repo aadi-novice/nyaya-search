@@ -27,6 +27,7 @@ from typing import Any
 from nyaya.config import Settings
 from nyaya.contracts import (
     ChunkRecord,
+    Era,
     Opinion,
     OpinionType,
     ParsedDoc,
@@ -55,6 +56,19 @@ _PARA = re.compile(
     r"(\d{1,3})(?:\.(\d{1,2}))?(\.?)(?=\s)",
     re.MULTILINE,
 )
+# Era B (OCR of 1965-2009 scans): the full stop may come out as "," or ":"
+# ("4, The High Court", "8: Shri"), the space after it may be lost
+# ("11.Aggrieved"), "1" may read "l" or "I", the author may lack the comma or
+# be followed by a dash ("SRINIVASAN, J.- 2."), and the speck before the
+# number may be an "O" or "c" (a margin letter misread).
+_PARA_B = re.compile(
+    r"^[ \t]*(?:[·•.,'\"~`\-:;][ \t]*){0,4}(?:[A-HOoc][ \t]+)?"
+    r"(?:[A-Z][A-Za-z. \t]{2,60}?,?[ \t]*(?<![A-Za-z])(?:CJI|C\.J|J)\.?[ \t]*[:.,]?[ \t]*"
+    r"(?:[-\N{EN DASH}\N{EM DASH}]+[ \t]*)?)?"
+    r"(\d{1,3}|[lI](?=\.))(?:\.(\d{1,2}))?([.,:]?)(?=\s|[A-Z])",
+    re.MULTILINE,
+)
+_OCR_ONE = str.maketrans({"l": "1", "I": "1"})
 _MAX_JUMP = 10
 # A sub-heading in capitals on its own line ("FACTUAL ASPECT", "ANALYSIS").
 _HEADING = re.compile(r"^[ \t]*([A-Z][A-Z0-9 .,:;'&()/\-]{2,80}?)[ \t]*$", re.MULTILINE)
@@ -109,8 +123,14 @@ def _strip(text: str, start: int, end: int) -> tuple[int, int]:
     return start, end
 
 
-def find_paragraphs(text: str, start: int, end: int) -> list[Paragraph]:
-    """Numbered paragraphs in text[start:end], in order; [] if none.
+def find_paragraphs(
+    text: str, start: int, end: int, min_paragraphs: int = 1, era_b: bool = False
+) -> list[Paragraph]:
+    """Numbered paragraphs in text[start:end], in order; [] if none, or if the
+    best sequence has fewer than `min_paragraphs` paragraphs.
+
+    `era_b` uses the OCR-tolerant Era B pattern (`paragraph_rules` gives both
+    settings for a document).
 
     Labels must run in order ("12" -> "13" or "12.1"); a whole-number label
     needs its full stop (a wrapped "13 of the Act" is not a paragraph), and
@@ -124,8 +144,8 @@ def find_paragraphs(text: str, start: int, end: int) -> list[Paragraph]:
     13-21 then looked like steps backwards.
     """
     cands: list[tuple[int, int, int, bool]] = []
-    for m in _PARA.finditer(text, start, end):
-        ma, mi, dot = int(m.group(1)), int(m.group(2) or 0), bool(m.group(3))
+    for m in (_PARA_B if era_b else _PARA).finditer(text, start, end):
+        ma, mi, dot = int(m.group(1).translate(_OCR_ONE)), int(m.group(2) or 0), bool(m.group(3))
         if mi or dot:
             cands.append((m.start(), ma, mi, dot))
     # best[i] = (paragraphs, -skipped numbers) of the best sequence ending at i
@@ -152,6 +172,8 @@ def find_paragraphs(text: str, start: int, end: int) -> list[Paragraph]:
     if not ends:
         return []
     k: int | None = max(ends, key=lambda i: (best[i], -i))
+    if best[k][0] < min_paragraphs:  # type: ignore[index]
+        return []
     chain: list[int] = []
     while k is not None:
         chain.append(k)
@@ -169,6 +191,15 @@ def find_paragraphs(text: str, start: int, end: int) -> list[Paragraph]:
         if a < b:
             paras.append(Paragraph(label, a, b))
     return paras
+
+
+def paragraph_rules(parsed: ParsedDoc, settings: Settings) -> dict[str, Any]:
+    """find_paragraphs keyword arguments for a document. Era B: the OCR-tolerant
+    pattern, and `era_b.min_numbered_paragraphs` (a lone "752." at a line start
+    is a page number or a citation, not a numbered judgment)."""
+    if parsed.era is Era.B:
+        return {"min_paragraphs": settings.era_b.min_numbered_paragraphs, "era_b": True}
+    return {}
 
 
 def _unnumbered(text: str, start: int, end: int, settings: Settings) -> list[Paragraph]:
@@ -491,7 +522,7 @@ def chunk(
         (zones.judgment_span[0], zones.judgment_span[1], None, None)
     ]
     for s, e, author, kind in spans:
-        paras = find_paragraphs(text, s, e)
+        paras = find_paragraphs(text, s, e, **paragraph_rules(parsed, settings))
         flags: list[str] = []
         if not paras:
             paras = _unnumbered(text, s, e, settings)
