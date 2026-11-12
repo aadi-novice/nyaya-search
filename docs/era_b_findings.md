@@ -269,7 +269,12 @@ the OCR itself (below).
 * **No version bump.** `clean_text` (ct1) and `chunker` (ch4) stay: Era C
   and Era D output is byte-identical (above), and there is no earlier Era B
   output for a version to tell apart. Era B records carry `era = "b"`. The
-  next change to Era B output after an Era B build must bump them.
+  next change to Era B output after an Era B build must bump them. After
+  the merge into `p2-p4-integration` the versions are `phase-1`'s ct2 (Era D
+  head band) and ch4: on the seed-42 sample the Era B clean texts and
+  chunks are identical to this branch's except for that version string,
+  and Era C/D output is byte-identical to `phase-1` (132 judgments,
+  2010–2026).
 * **`Era.B = "b"`** is a new contract value; `contracts/schema.json` is
   regenerated and `db/migrations/003_era_b.sql` widens the `judgments.era`
   check.

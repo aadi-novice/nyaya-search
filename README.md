@@ -57,7 +57,7 @@ flowchart TD
 
 **Structure-aware chunking.** Judgments are cut along their own structure: opinion (majority, concurring, dissenting), then numbered paragraph, then a size pass that splits long paragraphs and merges short ones (target 400 words, range 80–700). Chunk boundaries fall between paragraphs, so a citation names the paragraph a lawyer will look up. Each chunk carries a metadata header (case, year, zone) that is embedded and keyword-indexed but never quoted. Fixed token windows, semantic chunking, LLM-written chunk context and per-document chunker selection were considered and rejected; recursive splitting is kept only as the fallback inside one over-long paragraph (design, Alternatives G–L).
 
-**Layout eras.** The Supreme Court Reports PDFs come in distinct layouts. Era C (2010–2023) prints margin letters A–H beside the text, among the words a text extractor returns. Era D (late 2023 onward) is born digital, with labelled *Issue for Consideration* and *Headnotes* sections. Each PDF is classified from its first pages, and the parser removes margin letters, running heads and page numbers by their position on the page, using bands calibrated on a seeded 50-PDF sample. Docling for every era was tested and rejected for v1 (design, Alternative F); older, scanned eras come later.
+**Layout eras.** The Supreme Court Reports PDFs come in distinct layouts. Era C (2010–2023) prints margin letters A–H beside the text, among the words a text extractor returns. Era D (late 2023 onward) is born digital, with labelled *Issue for Consideration* and *Headnotes* sections. Each PDF is classified from its first pages, and the parser removes margin letters, running heads and page numbers by their position on the page, using bands calibrated on a seeded 50-PDF sample. Docling for every era was tested and rejected for v1 (design, Alternative F). Era B (the scanned 1964–2009 volumes) has its own parser, which finds the body column on each page and removes the margin letters outside it ([findings](docs/era_b_findings.md)); those years are not in the index yet.
 
 **Refusal threshold.** After reranking, the top score must clear a threshold, or the system refuses before calling the LLM. The thresholds are tuned per reranker (the local Qwen reranker and the Cohere fallback score differently), on the development set only, under the rule that at most 10% of answerable questions may be refused. They are stored with the index version, not in code.
 
@@ -177,7 +177,7 @@ The unit tests (`uv run pytest`) cover every response path of the pipeline and t
 
 From the design's Future Improvements:
 
-- **Older judgments:** Era B with position-based margin removal, Era A with OCR, and a fuzzy quote route for OCR text.
+- **Older judgments:** an Era B (1964–2009) build (the parser is done), Era A with OCR, and a fuzzy quote route for OCR text.
 - **A High Court subset**, chosen by court and year.
 - **Scale-out to Qdrant** past 1–2 million vectors, or when filtered search misses its latency budget.
 - **Answers:** stream, then replace with the checked version; one query rewrite before a refusal; failover between LLM providers.

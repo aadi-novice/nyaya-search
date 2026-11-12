@@ -492,7 +492,11 @@ test.
     title in capitals. Paragraph breaks come from first-line indents and are
     written as blank lines in the clean text. Tunables are in `[era_b]`.
     Era C and Era D output is unchanged (byte-identical on 182 judgments),
-    so `clean_text` and `chunker` versions are not bumped.
+    so `clean_text` and `chunker` versions are not bumped. Re-checked after
+    the merge with `phase-1` (ct2, linear-time paragraph sequence): Era C/D
+    clean text and chunks byte-identical to `phase-1` on 12 judgments per
+    year for 2010, 2012, ..., 2022 and 2023–2026 (seed 42), and Era B
+    output unchanged apart from the version string (ct2).
 *   **Furniture removal.** Extract words with their bounding boxes, then
     remove three kinds of furniture **by position**, before words are joined
     into lines:
