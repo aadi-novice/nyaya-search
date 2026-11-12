@@ -159,6 +159,8 @@ class Refusal(_Section):
 class Llm(_Section):
     max_input_tokens: int
     max_output_tokens: int
+    # sent as `reasoning_effort` to reasoning models (gpt-oss); "" sends nothing
+    reasoning_effort: str = ""
     repair_min_seconds_left: int
 
 

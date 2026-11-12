@@ -218,7 +218,9 @@ class QwenReranker:
             for start in range(0, len(order), self.batch_size):
                 idx = order[start : start + self.batch_size]
                 inputs = self._batch_inputs([pairs[i] for i in idx])
-                logits = self.model(**inputs).logits[:, -1, :]
+                # logits_to_keep=1: only the last position goes through the
+                # 151k-word LM head; full logits cost ~1 GB per batch of 4
+                logits = self.model(**inputs, logits_to_keep=1).logits[:, -1, :]
                 for i, p in zip(idx, yes_probability(logits, self.yes_id, self.no_id), strict=True):
                     out[i] = p
         return out

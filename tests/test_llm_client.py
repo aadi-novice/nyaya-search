@@ -231,3 +231,14 @@ def test_unavailable_during_repair_propagates():
     clock = Clock()
     with pytest.raises(LLMUnavailable):
         generate_answer(llm, "s", "u", started_at=clock(), settings=SETTINGS, clock=clock)
+
+
+def test_reasoning_effort_is_sent_only_when_set():
+    llm, fake = client(reply(json.dumps(GOOD)))
+    llm.complete_json("s", "u", timeout=1)
+    assert "reasoning_effort" not in fake.calls[0]
+    fake2 = FakeOpenAI(reply(json.dumps(GOOD)))
+    LLMClient(model="m", max_output_tokens=10, client=fake2, reasoning_effort="low").complete_json(
+        "s", "u", timeout=1
+    )
+    assert fake2.calls[0]["reasoning_effort"] == "low"

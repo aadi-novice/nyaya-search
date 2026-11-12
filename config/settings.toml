@@ -123,7 +123,12 @@ max_wrong_refusal_share = 0.10
 
 [llm]
 max_input_tokens = 6000
-max_output_tokens = 800
+# 1200 (was 800) and reasoning effort "low", 2026-11-13: gpt-oss-120b on Groq
+# spends its budget on reasoning at the default effort, and Groq then rejects
+# the cut-off JSON (HTTP 400 "Failed to validate JSON"). Measured on a real
+# prompt: low effort used 366-763 completion tokens (97-461 of them reasoning).
+max_output_tokens = 1200
+reasoning_effort = "low"
 repair_min_seconds_left = 4
 
 [timeouts]

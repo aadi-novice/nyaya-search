@@ -1433,11 +1433,16 @@ to.
     `retrieval.rerank_candidates` 100 → 50; `encoders.rerank_batch_size` = 4
     (a setting now); the reranker loads with `attn_implementation="sdpa"`.
     *   **Measured 2026-11-13** on 100 real 2025 judgment chunks (median of
-        3 runs, batch 4, peak VRAM 3.5–3.8 GB): sdpa 6.9 s for 50 and
-        14.2 s for 100; eager attention 10.3 s and 15.9 s. Sdpa is kept.
-        The 7.4 s for 100 was not reproduced (the laptop GPU ran at about
-        75 °C during the run, with the CPU busy parsing), so 50 candidates
-        is the right cap for now.
+        3 runs, batch 4): sdpa 6.9 s for 50 and 14.2 s for 100; eager
+        attention 10.3 s and 15.9 s. In the pipeline, with the embedder
+        also loaded, 50 candidates took 15–34 s: the reranker computed
+        logits for every position over the 151k-word vocabulary (about 1 GB
+        per batch), which pushed VRAM past 6 GB into Windows' shared-memory
+        fallback.
+    *   **Fix (same day):** the forward pass now asks for the last position
+        only (`logits_to_keep=1`). Re-measured: sdpa 4.3 s for 50 and 8.4 s
+        for 100 (peak 1.6–1.7 GB); eager 6.5 s and 12.6 s. Sdpa is kept. In
+        the pipeline, reranking 50 candidates takes 4.0–5.1 s.
     *   **Still open:** whether recall@50 drops when the reranker sees 50
         instead of 100 candidates; `nyaya-eval retrieval` on `dev_v1`
         (Phase 2) answers it, and G7 latency is measured in Phase 3.
@@ -1600,7 +1605,7 @@ to.
 | `retrieval.expand_rank_offset`, `retrieval.lookup_max_editorial` | float, int | 0.5, 3 |
 | `refusal.threshold_qwen`, `refusal.threshold_cohere` | float | 0.35, 0.20 (seed values only; the gate reads `index_versions`) |
 | `refusal.max_wrong_refusal_share` | float | 0.10 |
-| `llm.max_input_tokens`, `llm.max_output_tokens`, `llm.repair_min_seconds_left` | int | 6000, 800, 4 |
+| `llm.max_input_tokens`, `llm.max_output_tokens`, `llm.repair_min_seconds_left`, `llm.reasoning_effort` | int, str | 6000, 1200 (was 800), 4, `low` (sent only when not empty). Changed 2026-11-13: at its default effort gpt-oss-120b on Groq spent the 800 tokens on reasoning and Groq rejected the cut-off JSON with HTTP 400; at `low` a real prompt used 366–763 completion tokens |
 | `timeouts.request_s`, `timeouts.llm_s`, `timeouts.answer_deadline_s` | int | 30, 12, 15 |
 | `load.smoke_min_hits` | int | 8 (of the 10 smoke questions) |
 | `g6.min_paragraph_integrity`, `g6.min_size_compliance`, `g6.holdout_size`, `g6.holdout_seed` | float/int | 0.98, 0.99, 50, 4242 |

@@ -105,7 +105,8 @@ class FakeLM:
     def __init__(self):
         self.batches = []
 
-    def __call__(self, input_ids, attention_mask):
+    def __call__(self, input_ids, attention_mask, logits_to_keep=0):
+        assert logits_to_keep == 1  # only the last position is scored
         self.batches.append(input_ids.shape[0])
         b, length = input_ids.shape
         logits = torch.zeros(b, length, 12)

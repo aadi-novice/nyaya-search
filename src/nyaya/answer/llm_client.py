@@ -84,8 +84,10 @@ class LLMClient:
         base_url: str | None = None,
         api_key: str | None = None,
         json_mode: bool = True,
+        reasoning_effort: str = "",
     ) -> None:
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
         # max_retries=0: the time budget is ours to manage, not the SDK's.
@@ -109,6 +111,7 @@ class LLMClient:
         return cls(
             model=s.llm_model,
             max_output_tokens=settings.llm.max_output_tokens,
+            reasoning_effort=settings.llm.reasoning_effort,
             base_url=s.llm_base_url,
             api_key=s.llm_api_key.get_secret_value(),
             **kwargs,
@@ -135,6 +138,8 @@ class LLMClient:
         }
         if self.json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
         try:
             response = self._client.chat.completions.create(**kwargs)
         except (openai.OpenAIError, httpx.HTTPError) as exc:
