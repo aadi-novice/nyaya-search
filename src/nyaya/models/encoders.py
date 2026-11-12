@@ -76,7 +76,7 @@ class Embedder:
                 revision=_revision(settings.embed.revision),
                 device=device,
                 model_kwargs={"dtype": torch.float16},
-                tokenizer_kwargs={"padding_side": "left"},
+                processor_kwargs={"padding_side": "left"},
             )
         self.model = model
 
@@ -157,7 +157,7 @@ class QwenReranker:
         model: Any = None,
         tokenizer: Any = None,
         device: str = "cuda",
-        batch_size: int = 8,
+        batch_size: int = 4,
         max_length: int = 8192,
     ) -> None:
         self.model_name = settings.rerank.model
