@@ -46,7 +46,11 @@ MAX_HEADER_ACTS = 3
 # A numbered paragraph starts a line: "12. ", "12.1 ", "1.\n". On the first line
 # of an opinion the author may come first: "DEEPAK GUPTA, J. 1. ...".
 _PARA = re.compile(
-    r"^[ \t]*(?:[A-Z][A-Za-z. \t]{2,60}?,[ \t]*(?:CJI|C\.J|J)\.?[ \t]*:?[ \t]+"
+    # Era C OCR leaves specks and lone margin letters before the number
+    # ("· 11.", ".. . 55.", "·A 25."); the longest-sequence rule below keeps
+    # this from admitting stray numbers.
+    r"^[ \t]*(?:[·•.,'\"~`\-:;][ \t]*){0,4}(?:[A-H][ \t]+)?"
+    r"(?:[A-Z][A-Za-z. \t]{2,60}?,[ \t]*(?:CJI|C\.J|J)\.?[ \t]*:?[ \t]+"
     r"(?:[-\u2013\u2014][ \t]+)?)?"
     r"(\d{1,3})(?:\.(\d{1,2}))?(\.?)(?=\s)",
     re.MULTILINE,

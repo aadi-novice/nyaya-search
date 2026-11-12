@@ -399,3 +399,8 @@ def test_an_over_long_held_point_is_split_and_keeps_its_links(settings):
     assert len(ed) > 2
     assert all(len(c.text.split()) <= settings.chunk.max_words for c in ed)
     assert all(c.para_refs == ["12"] and "recursive_split" in c.flags for c in ed)
+
+
+def test_ocr_specks_and_margin_letters_before_a_number_are_tolerated():
+    text = "1. One.\n· 2. Two.\n.. . 3. Three.\n·A 4. Four.\nB 5. Five.\n"
+    assert [p.label for p in find_paragraphs(text, 0, len(text))] == ["1", "2", "3", "4", "5"]

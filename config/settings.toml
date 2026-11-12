@@ -20,7 +20,7 @@ build = "build"
 
 [versions]
 clean_text = "ct1"
-chunker = "ch3"  # ch3 (2026-11-13): paragraph numbers chosen as the longest in-order sequence; ch2: Era C title-case "Held:" fallback
+chunker = "ch4"  # ch4 (2026-11-13): OCR specks before paragraph numbers; ch3: longest in-order paragraph sequence, long Held points split; ch2: Era C title-case Held
 config = "cfg1"
 prompt = "answer_v1"
 
