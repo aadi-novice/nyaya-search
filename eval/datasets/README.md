@@ -8,7 +8,7 @@ checked by `tests/test_eval_datasets.py`.
 | File | Format | Written by | Used by |
 | --- | --- | --- | --- |
 | `dev_v1.jsonl` | question | `nyaya-eval build-devset`, then the author's hand check | `retrieval`, `size-steps`, `bm25-trigger`, `tune-threshold`, `answers` |
-| `dev_v1_handcheck.csv` | hand check | `nyaya-eval build-devset` | the author |
+| `dev_v1_handcheck.csv` | hand check | `nyaya-eval build-devset` | the author; `ragas` (the Held text as reference) |
 | `dev_draft_v0.jsonl` | question | `scripts/draft_devset_v0.py` (a draft made before the index existed) | the author, until `dev_v1` exists |
 | `unanswerable_v1.jsonl` | question (`type: unanswerable`) | the author | `tune-threshold`, `answers`, CUJ 4 |
 | `phase1_smoke.jsonl` | smoke | the author | `nyaya-build load` (smoke check), Phase 1 verification |
