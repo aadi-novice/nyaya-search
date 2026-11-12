@@ -14,6 +14,7 @@ from nyaya.eval import answers as A
 from nyaya.eval.datasets import AdversarialItem, DevItem, Gold, write_jsonl
 from nyaya.eval.judge import ERROR, Verdict
 from nyaya.eval.ratelimit import PausableClock, RateLimitExhausted
+from nyaya.models.encoders import document_text
 from test_pipeline import C1, C2, C3, CHUNKS, GOOD_OUTPUT, J1, J2, SETTINGS, FakeLLM, make_deps
 
 REQ = httpx.Request("POST", "http://llm/v1/chat/completions")
@@ -79,6 +80,10 @@ def test_answered_question_record():
     assert rec["status"] == "answered" and rec["set"] == "dev"
     assert len(traces) == 1  # the real trace is still written
     assert rec["retrieved"][0] == C1 and set(rec["retrieved"]) <= {C1, C2, C3}
+    by_id = {c.chunk_id: c for c in CHUNKS}
+    assert rec["contexts"] == [
+        document_text(by_id[i].header, by_id[i].text) for i in rec["retrieved"]
+    ]
     assert [b["kind"] for b in rec["rule_breaks"]] == ["quote_not_found"]
     assert len(rec["unverified"]) == 1 and rec["gaps"]
     assert rec["notice_shown"] and rec["citations_checked"] and rec["gold_retrieved"]
