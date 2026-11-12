@@ -1,0 +1,13 @@
+docs/data/
+docs/metadata/
+docs/download.log
+*.part
+__pycache__/
+.venv/
+docs/data_check.json
+docs/layout_study/
+docs/docling_test/
+obsidian-vault/
+design_draft.md
+.env
+build/
