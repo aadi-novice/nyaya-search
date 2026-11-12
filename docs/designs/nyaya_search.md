@@ -458,6 +458,8 @@ test.
     | --- | --- |
     | **Era D (late 2023+)** | at least 2 of: `Issue for Consideration`, `Headnotes`, `Case Law Cited`, `List of Acts`, `List of Keywords` |
     | **Era C (2010–2023)** | not Era D, **and** at least 3 lines matching `^\s*[A-H]\s*$`, **and** `HELD\s*:` present, **and** the decision year is 2010–2023 |
+    | **Era B (1964–2009; added 2026-11-13, Phase 4)** | not Era D or C, **and** at least 5 lines matching `era_markers.b.margin_line_regex` (a margin letter alone on a line, or at either end of a body line), **and** the decision year is 1950–2009 (the markers, not the year, separate it from Era A) |
+    | **out_of_scope** | anything else, logged to `build/skipped.csv` with reason `era_out_of_scope`; detail `era_a_scan` for a year up to 2009 without margin letters (Era A) |
 
     **Thresholds lowered 2026-11-13 (Phase 1 integration, measured on 80
     judgments per decision year, 2010–2026):** with "at least 3" labels,
@@ -480,7 +482,17 @@ test.
     top band is now 0–0.17. On 100 Era D judgments from 2023–2026, every
     line this removed was a running head, a head continuation or a page
     number.
-    | **out_of_scope** | anything else, logged to `build/skipped.csv` with reason `era_out_of_scope` |
+*   **Era B (as built, 2026-11-13, branch `p4-era-b`; measurements in
+    `docs/era_b_findings.md`):** margin letters are removed by the body
+    column, not a calibrated band: a short token (a letter A–H, an OCR
+    variant, or a speck) at least `era_b.column_gap` outside the column,
+    which is measured per page after removing the scan's skew (the slope of
+    the letter columns). Running heads are the first rows of a page that
+    start or end with the page number, name the reports, or are a case
+    title in capitals. Paragraph breaks come from first-line indents and are
+    written as blank lines in the clean text. Tunables are in `[era_b]`.
+    Era C and Era D output is unchanged (byte-identical on 182 judgments),
+    so `clean_text` and `chunker` versions are not bumped.
 *   **Furniture removal.** Extract words with their bounding boxes, then
     remove three kinds of furniture **by position**, before words are joined
     into lines:
@@ -510,6 +522,15 @@ matching line ends:
 | editorial | `^Headnotes\b` → `^Case Law Cited\s*$` | the line after the bench line → the first line matching `^(?:Case Law Reference|CIVIL|CRIMINAL|ORIGINAL|WRIT|APPELLATE)\b.*JURISDICTION|^Case Law Reference\s*$` | one chunk per Held point, tagged `editorial`, keeping its `para_refs` |
 | references | `^Case Law Cited\s*$` → `^Case Arising From\s*$` (holds "List of Acts" and "List of Keywords") | `^Case Law Reference\s*$` → the jurisdiction line; Acts come from the catchwords (rules below) | Acts and keywords become `refs` rows; nothing is chunked |
 | judgment | `^Judgment\s*/\s*Order of the Supreme Court\s*$` → text end | the jurisdiction line → text end | split into opinions, then chunked |
+
+**Era B** (added 2026-11-13) uses the Era C patterns with OCR forms
+("HELB :", "CtVIL APPELLATE JuR1smcnoN", damaged bench lines), Held
+points numbered "1." or "(1)", "(i)", and no references zone. The judgment
+starts at "The Judgment of the Court was delivered by" (or a "JUDGMENT" /
+"ORDER" line, or the author's "NAME, J." line) after the jurisdiction line,
+so the case details and counsel are in no zone. Opinions start at an author
+line followed by the first sentence, with OCR-tolerant name matching. A
+numbered-paragraph sequence needs `era_b.min_numbered_paragraphs` (3).
 
 If a zone cannot be found, it is recorded in `Zones.missing`. The judgment
 zone then falls back to the whole clean text, and the document is flagged
@@ -1408,6 +1429,12 @@ to.
     *   the HNSW build no longer fits Postgres's memory.
 *   **Older eras.**
     *   Era B: position-based removal of margin letters, tuned for that era.
+        Parser, zoner and chunker built and measured 2026-11-13
+        (`docs/era_b_findings.md`: the G6 gates pass on 1970–2009
+        samples); the full 1970–2009 build (about 305,000 chunks, about 5
+        hours of embedding) is still to run. Open: page-and-margin-letter
+        pinpoints ("[79-G-H]") in the position map, and footnotes left
+        inline.
     *   Era A: Docling with OCR on Kaggle, plus rules that cut out
         neighbouring-case text.
     *   The fuzzy quote route (Alternative S) belongs to this phase.

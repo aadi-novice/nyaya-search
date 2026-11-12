@@ -3,7 +3,8 @@
 `split_opinions(parsed, zones, judges) -> [Opinion]`.
 
 *   An opinion starts at a line "NAME, J." (or "J", "CJI", "C.J."), optionally
-    followed on the same line by the first paragraph ("DEEPAK GUPTA, J. 1. ..."),
+    followed on the same line by the first paragraph ("DEEPAK GUPTA, J. 1. ...");
+    in Era B by any first sentence ("JASWANT SINGH, J.-These appeals ..."),
     where NAME matches a judge on the bench line or in `judges` (metadata).
     When no names are known at all, any such line starts an opinion.
 *   The type comes from the ordered phrase list in `opinion.phrases`, matched
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from difflib import SequenceMatcher
 
 from nyaya.config import Settings
 from nyaya.contracts import Era, Opinion, OpinionType, ParsedDoc, Zones
@@ -30,6 +32,17 @@ _START = re.compile(
     # then the line end, or the first paragraph, after an optional dash
     # ("A.K. SIKRI, J. - 1. ..."); "I." is OCR for "1." in scanned years
     r"(?=[ \t]*$|[ \t]+(?:[-\u2013\u2014][ \t]+)?(?:\d{1,3}|I)\.\s)",
+    re.MULTILINE,
+)
+# Era B: the first sentence follows the author on the same line ("JASWANT
+# SINGH, J.-These appeals", "Shah, J. One Sashi", "ARIJIT PASAYAT, J.: Leave
+# granted."); OCR may drop the comma ("Hegcle J. This"), put a speck first,
+# a quote before the J ("SHARMA, 'J."), a space or a comma after it ("PATHAK,
+# J, This", "KH.NNA, J .. A decree"), or read "C.J." as "CJ".
+_START_B = re.compile(
+    r"^[ \t]*[^\w\n]{0,3}[ \t]*([A-Z][A-Za-z. \t]{2,60}?),?[ \t]*['\"]?(?<![A-Za-z])"
+    r"(CJI|C\.J|CJ|J)(?![A-Za-z])[ \t]?([.,]?)[ \t]*[:.,]?[ \t]*"
+    r"(?:[-\N{EN DASH}\N{EM DASH}]+|\.{2,})?[ \t]*(?=$|[A-Z0-9(\"'])",
     re.MULTILINE,
 )
 _NUMBERED_LINE = re.compile(r"^[ \t]*\d{1,3}(?:\.\d{1,2})?\.\s", re.MULTILINE)
@@ -84,6 +97,26 @@ def names_match(a: str, b: str) -> bool:
     )
 
 
+OCR_NAME_MIN = 0.75  # SequenceMatcher ratio for an Era B author name read with OCR errors
+OCR_NAME_MIN_LETTERS = 4
+
+
+def ocr_name_match(name: str, known: str) -> bool:
+    """Era B: the author's printed name against a bench or metadata name, with
+    OCR errors ("BHAGWATI" / "P. N. BHAGWAT!", "NANAVATl" / "G.T. NANA VAT!",
+    "FAzAL ALI" / "S. MURTAZA FAZAL ALI").
+
+    The letters of `name` are compared with the same number of letters at the
+    end of `known` (the surname comes last); names of fewer than
+    OCR_NAME_MIN_LETTERS letters must match exactly (names_match).
+    """
+    a = re.sub(r"[^A-Z]", "", name.upper())
+    b = re.sub(r"[^A-Z]", "", known.upper())
+    if len(a) < OCR_NAME_MIN_LETTERS or not b:
+        return False
+    return SequenceMatcher(None, a, b[-len(a) :], autojunk=False).ratio() >= OCR_NAME_MIN
+
+
 def _phrase_type(text: str, settings: Settings) -> OpinionType | None:
     window = text[: settings.opinion.phrase_window_chars].lower()
     window = " ".join(window.split())
@@ -109,11 +142,15 @@ def split_opinions(
     starred = [p for p, s in entries if s]
 
     starts: list[tuple[int, str, str]] = []  # (offset, display author, name)
-    for m in _START.finditer(text, j_start, j_end):
+    start_rx = _START_B if parsed.era is Era.B else _START
+    for m in start_rx.finditer(text, j_start, j_end):
         name = " ".join(m.group(1).split())
-        if known and not any(names_match(name, k) for k in known):
+        era_b = parsed.era is Era.B
+        if known and not any(
+            names_match(name, k) or (era_b and ocr_name_match(name, k)) for k in known
+        ):
             continue
-        title = {"J": "J.", "C.J": "C.J.", "CJI": "CJI"}[m.group(2)]
+        title = {"J": "J.", "C.J": "C.J.", "CJ": "C.J.", "CJI": "CJI"}[m.group(2)]
         starts.append((m.start(), f"{name}, {title}", name))
 
     spans: list[tuple[int, int, str | None, str | None]] = []
