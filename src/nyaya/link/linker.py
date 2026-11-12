@@ -54,6 +54,7 @@ def resolve_held_links(chunks: Iterable[ChunkRecord]) -> tuple[list[Link], dict[
     for c in chunks:
         by_doc[c.judgment_id].append(c)
     links: list[Link] = []
+    seen: set[Link] = set()  # list membership made a 400-page judgment take 6 minutes
     summary: dict[str, Any] = {
         "held_points": 0,
         "held_points_with_refs": 0,
@@ -81,7 +82,8 @@ def resolve_held_links(chunks: Iterable[ChunkRecord]) -> tuple[list[Link], dict[
                 summary["ambiguous"] += int(ambiguous)
                 for h in hits:
                     link = (ed.chunk_id, h.chunk_id)
-                    if link not in links:
+                    if link not in seen:
+                        seen.add(link)
                         links.append(link)
     summary["resolution_rate"] = (
         summary["resolved"] / summary["para_refs"] if summary["para_refs"] else None
