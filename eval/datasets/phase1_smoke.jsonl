@@ -1,0 +1,10 @@
+{"id": "smoke-01", "question": "2025 INSC 31", "expected_route": "citation_lookup", "expected_path": "2025_1_230_238"}
+{"id": "smoke-02", "question": "[2025] 1 S.C.R. 718", "expected_route": "citation_lookup", "expected_path": "2025_1_718_728"}
+{"id": "smoke-03", "question": "anticipatory bail section 438", "expected_route": "hybrid", "expected_path": "2025_9_283_299"}
+{"id": "smoke-04", "question": "Is the three-month limit for challenging an arbitral award extended when its last day falls on a court holiday?", "expected_route": "hybrid", "expected_path": "2025_5_401_408", "filters": {"act": "Arbitration and Conciliation Act, 1996"}}
+{"id": "smoke-05", "question": "Can a cheating FIR be quashed when the complainant's real grievance is a title dispute already pending in civil suits?", "expected_route": "hybrid", "expected_path": "2025_1_230_238"}
+{"id": "smoke-06", "question": "Can a conviction rest on a dying declaration that contradicts the victim's earlier statements and has no corroboration?", "expected_route": "hybrid", "expected_path": "2025_3_317_324"}
+{"id": "smoke-07", "question": "How should loss of income and future prospects be assessed for a young student left fully disabled by a road accident?", "expected_route": "hybrid", "expected_path": "2025_4_50_62"}
+{"id": "smoke-08", "question": "Is income from mining cryptocurrency on farmland treated as agricultural income?", "expected_route": "hybrid", "expected_path": null}
+{"id": "smoke-09", "question": "Does a hologram signature on an electronic will satisfy attestation by two witnesses?", "expected_route": "hybrid", "expected_path": null}
+{"id": "smoke-10", "question": "What licence does a commercial space tourism operator need from ISRO before launching passengers?", "expected_route": "hybrid", "expected_path": null}
