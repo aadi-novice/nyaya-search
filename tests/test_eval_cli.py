@@ -39,9 +39,16 @@ def test_every_design_subcommand_exists():
         assert parser.parse_args([name]).command == name
 
 
-def test_not_built_commands_exit_2(capsys):
-    assert cli.main(["g6-holdout"]) == 2
-    assert "Phase 2" in capsys.readouterr().err
+def test_g6_holdout_without_a_manifest_is_a_setup_error(monkeypatch, tmp_path, capsys):
+    import nyaya.corpus.manifest as manifest
+
+    def missing(settings):
+        raise FileNotFoundError("build/manifest.parquet not found")
+
+    monkeypatch.setattr(cli, "load_settings", lambda: load_settings(env_file=None))
+    monkeypatch.setattr(manifest, "load_manifest", missing)
+    assert cli.main(["g6-holdout", "--out", str(tmp_path / "out")]) == 2
+    assert "manifest.parquet" in capsys.readouterr().err
 
 
 def test_unknown_method_is_a_usage_error(monkeypatch, tmp_path, capsys):

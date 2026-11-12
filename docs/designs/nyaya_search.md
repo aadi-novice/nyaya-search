@@ -2298,6 +2298,27 @@ to.
     *   `judge-validate`;
     *   `lawyer-export`;
     *   `lawyer-import`.
+    *   **As built (2026-11-13, branch `p4-demo`): `g6-holdout`**
+        (`eval/g6_holdout.py`).
+        *   **Sample:** manifest rows with a PDF and a decision year in
+            `--years` (default 2010-2026), minus the calibration sample
+            (`calibrate.seed`, all eras, as `nyaya-build calibrate` draws
+            it), in path order, shuffled with `g6.holdout_seed`. Rows are
+            taken in that order until `g6.holdout_size` in-scope PDFs are
+            kept; out-of-scope or failing PDFs are recorded as skipped and
+            replaced by the next row. Uncalibrated Era C bands stop the run.
+        *   **Output** under `eval/runs/g6_holdout/` (git-ignored): per PDF
+            `page-NNN.png`, `clean_text.txt` and `review.html` (each page
+            image beside that page's clean text, split by the position map);
+            `index.html`; `handcheck.csv` with blank
+            `margin_letters_found`, `running_heads_found` and `notes`
+            columns; `sample.json` (seed, years, excluded paths, skipped
+            rows).
+        *   **Hints, not the gate:** per PDF, the count of
+            `(?<=[a-z,]) [A-H] (?=[a-z])` matches and of lines matching
+            `running_head_patterns`.
+        *   **Exit codes:** 0 when `holdout_size` PDFs were laid out; 2 when
+            fewer were (or on a setup error).
 
 #### 40. `src/nyaya/eval/devset_from_held.py` (Create, Phase 1)
 
