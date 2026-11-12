@@ -58,9 +58,15 @@ def test_era_c():
     assert classify(ERA_C_TEXT, 2015, MARKERS) is Era.C
 
 
-@pytest.mark.parametrize("year", [2009, 2024, 1995])
+@pytest.mark.parametrize("year", [2024, 2026])
 def test_era_c_outside_its_years_is_out_of_scope(year):
     assert classify(ERA_C_TEXT, year, MARKERS) is Era.OUT_OF_SCOPE
+
+
+@pytest.mark.parametrize("year", [2009, 1995])
+def test_era_c_layout_before_2010_is_era_b(year):
+    # Margin letters before 2010 are the Era B volumes (1965-2009).
+    assert classify(ERA_C_TEXT, year, MARKERS) is Era.B
 
 
 @pytest.mark.parametrize("year", [2010, 2023])

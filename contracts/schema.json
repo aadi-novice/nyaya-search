@@ -360,6 +360,7 @@
     },
     "Era": {
       "enum": [
+        "b",
         "c",
         "d",
         "out_of_scope"

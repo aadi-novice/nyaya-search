@@ -91,9 +91,35 @@ class EraMarkersC(_Section):
     year_to: int
 
 
+class EraMarkersB(_Section):
+    margin_line_regex: str
+    min_margin_lines: int
+    year_from: int
+    year_to: int
+
+
 class EraMarkers(_Section):
     d: EraMarkersD
     c: EraMarkersC
+    b: EraMarkersB
+
+
+class EraB(_Section):
+    """Era B layout tunables (pdf_layout, zoner, chunker); x and y are page fractions."""
+
+    left_x: tuple[float, float]
+    right_x: tuple[float, float]
+    ocr_letters: list[str]
+    column_gap: float
+    column_window: float
+    min_column_lines: int
+    top_y: tuple[float, float]
+    bottom_y: tuple[float, float]
+    title_head_regex: str
+    min_head_upper_share: float
+    paragraph_indent: float
+    paragraph_indent_max: float
+    min_numbered_paragraphs: int
 
 
 class Chunk(_Section):
@@ -275,6 +301,7 @@ class Settings(_Section):
     bands: Bands = Bands()
     running_head_patterns: list[str]
     era_markers: EraMarkers
+    era_b: EraB
     chunk: Chunk
     opinion: OpinionCfg
     acts: Acts

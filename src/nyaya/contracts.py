@@ -25,6 +25,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "contracts" / "schema.json"
 
 
 class Era(StrEnum):
+    B = "b"
     C = "c"
     D = "d"
     OUT_OF_SCOPE = "out_of_scope"
@@ -89,7 +90,7 @@ def _check_span(start: int, end: int, what: str) -> None:
 
 class ParsedDoc(Contract):
     path: str
-    era: Era  # c | d only
+    era: Era  # b | c | d only
     clean_text: str
     # (char_offset, page) at the start of each line; page = printed SCR page
     position_map: list[tuple[int, int]]
@@ -99,7 +100,7 @@ class ParsedDoc(Contract):
     @model_validator(mode="after")
     def _era(self) -> ParsedDoc:
         if self.era is Era.OUT_OF_SCOPE:
-            raise ValueError("a ParsedDoc is era c or d; out-of-scope PDFs are skipped")
+            raise ValueError("a ParsedDoc is era b, c or d; out-of-scope PDFs are skipped")
         return self
 
 
