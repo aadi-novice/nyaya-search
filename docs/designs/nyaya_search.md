@@ -471,6 +471,15 @@ test.
     margin letters to the body line, leaving 3–4 lone letters. After both
     changes 1.2% of the sample is out of scope (mostly short orders with no
     "HELD:").
+
+    **Era D head band (clean_text `ct2`, 2026-11-13):** the "CASE DETAILS"
+    volumes print their running head ("1006 SUPREME COURT REPORTS [2023] 11
+    S.C.R." and the two-line case title) at about 0.16 of the page height,
+    below Era D's fixed top band (0–0.115), so it leaked into 2023 Held text
+    (175 of 2,808 2023 Held chunks had "SUPREME COURT REPORTS"). The Era D
+    top band is now 0–0.17. On 100 Era D judgments from 2023–2026, every
+    line this removed was a running head, a head continuation or a page
+    number.
     | **out_of_scope** | anything else, logged to `build/skipped.csv` with reason `era_out_of_scope` |
 *   **Furniture removal.** Extract words with their bounding boxes, then
     remove three kinds of furniture **by position**, before words are joined

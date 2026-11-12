@@ -59,7 +59,11 @@ COLUMN_MIN = 4  # lone tokens in one column, counting itself
 COLUMN_TOL = 0.012  # page-width fraction
 OUTER_ZONE = 0.3  # page-width fraction from either edge
 
-ERA_D_TOP_Y: Band = (0.0, 0.115)
+# 0.17 (was 0.115), 2026-11-13: the late-2023 "CASE DETAILS" volumes, classed
+# Era D, print the running head at about 0.16 of the page height (as Era C
+# does), and it leaked into 2023 Held text. Only head-like lines in the band
+# are removed (patterns, repeats, page numbers), so body lines stay.
+ERA_D_TOP_Y: Band = (0.0, 0.17)
 ERA_D_BOTTOM_Y: Band = (0.94, 1.0)
 DEFAULT_TOP_Y: Band = (0.0, 0.17)
 DEFAULT_BOTTOM_Y: Band = (0.94, 1.0)

@@ -19,7 +19,7 @@ metadata_root = "docs/metadata/parquet"
 build = "build"
 
 [versions]
-clean_text = "ct1"
+clean_text = "ct2"  # ct2 (2026-11-13): Era D head band 0.17 for late-2023 volumes
 chunker = "ch4"  # ch4 (2026-11-13): OCR specks before paragraph numbers; ch3: longest in-order paragraph sequence, long Held points split; ch2: Era C title-case Held
 config = "cfg1"
 prompt = "answer_v1"

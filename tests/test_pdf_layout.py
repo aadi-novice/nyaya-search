@@ -283,3 +283,13 @@ def test_real_pdf(year, path, labels):
     assert labels <= found
     assert doc.pages == int(path.split("_")[-1]) - start_page(path) + 1
     assert doc.position_map[0][1] == start_page(path)
+
+
+def test_era_d_head_band_covers_late_2023_running_heads():
+    # "CASE DETAILS" volumes (Era D) print the head at about 0.16 of the height
+    from nyaya.config import load_settings
+    from nyaya.contracts import Era
+    from nyaya.parse.pdf_layout import head_bands
+
+    top, _ = head_bands(load_settings(env_file=None), Era.D)
+    assert top[0] <= 0.155 and top[1] >= 0.165
