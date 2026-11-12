@@ -777,11 +777,12 @@ def build_deps(settings: Settings) -> Deps:  # pragma: no cover - needs the GPU 
         )
 
     gpu = threading.Lock()
-    embedder = Embedder(settings)
-    startup_check(settings, embedder)
+    device = settings.secrets.nyaya_device  # NYAYA_DEVICE: "cuda" (default) or "cpu"
+    embedder = Embedder(settings, device=device)
+    startup_check(settings, embedder, require_cuda=device == "cuda")
     models_loaded = True
     try:
-        reranker: Any = _ScoreReranker(QwenReranker(settings), gpu)
+        reranker: Any = _ScoreReranker(QwenReranker(settings, device=device), gpu)
     except Exception as exc:
         log.exception("local reranker failed to load; the fallback will be used")
         reranker = _UnavailableReranker(settings.rerank.model, f"{type(exc).__name__}: {exc}")

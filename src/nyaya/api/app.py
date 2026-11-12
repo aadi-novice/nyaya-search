@@ -12,7 +12,9 @@ Each /ask runs in a worker thread under `asyncio.wait_for` with the
 status `error` and the API writes the trace itself; on success the pipeline
 writes it. /search runs the same way under the same limit and writes no trace;
 the page calls it first so the passages show while the answer is written.
-The server binds 127.0.0.1 only.
+The server binds 127.0.0.1 unless `--host` says otherwise (the Docker image
+passes 0.0.0.0 inside its container; compose still publishes the port on the
+host's 127.0.0.1 only).
 """
 
 from __future__ import annotations
@@ -240,11 +242,14 @@ def create_app(
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="nyaya-api", description="Run the Nyaya Search API.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--host", default=HOST, help="default 127.0.0.1; 0.0.0.0 only inside a container"
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
     app = create_app(build_backend(settings), settings=settings)
-    uvicorn.run(app, host=HOST, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

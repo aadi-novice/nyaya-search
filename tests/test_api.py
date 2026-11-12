@@ -515,6 +515,8 @@ def test_main_binds_localhost(monkeypatch: pytest.MonkeyPatch, backend: FakeBack
     app_module.main(["--port", "8123"])
     assert seen["host"] == "127.0.0.1"
     assert seen["port"] == 8123
+    app_module.main(["--host", "0.0.0.0"])  # the Docker image, inside its container
+    assert seen["host"] == "0.0.0.0"
 
 
 def test_error_response_survives_a_versions_failure(

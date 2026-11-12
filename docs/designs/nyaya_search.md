@@ -2245,6 +2245,14 @@ to.
     *   **As built (2026-11-13, branch `p4-demo`):** `POST /search`
         (`AskRequest` -> `SearchResponse`) runs under the same timeout and
         returns `error` on a timeout or an exception, without a trace.
+    *   **As built (2026-11-13, branch `p4-demo`): CPU container.**
+        `nyaya-api --host` (default 127.0.0.1) lets the `Dockerfile` bind
+        0.0.0.0 inside its container; the compose `api` profile publishes
+        it on the host's 127.0.0.1:8000 next to `db`. `NYAYA_DEVICE=cpu`
+        (environment, default `cuda`) loads the embedder and reranker in
+        float32 on the CPU and lets `startup_check` pass without CUDA. No
+        model weights are in the image; they download into the `hf_cache`
+        volume. The GPU path and its float16 models are unchanged.
 
 #### 38. `web/index.html`, `web/app.js`, `web/style.css` (Create, Phase 1)
 
