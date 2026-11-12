@@ -40,8 +40,8 @@ def test_every_design_subcommand_exists():
 
 
 def test_not_built_commands_exit_2(capsys):
-    assert cli.main(["latency"]) == 2
-    assert "Phase 3" in capsys.readouterr().err
+    assert cli.main(["g6-holdout"]) == 2
+    assert "Phase 2" in capsys.readouterr().err
 
 
 def test_unknown_method_is_a_usage_error(monkeypatch, tmp_path, capsys):
