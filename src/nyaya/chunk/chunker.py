@@ -129,25 +129,39 @@ def find_paragraphs(text: str, start: int, end: int) -> list[Paragraph]:
         if mi or dot:
             cands.append((m.start(), ma, mi, dot))
     # best[i] = (paragraphs, -skipped numbers) of the best sequence ending at i
+    # A step depends only on the previous label, so the best earlier sequence
+    # per label (and per whole number) is enough: linear, not quadratic, in
+    # the number of numbered lines (a 400-page judgment has thousands).
+    # Ties go to the earliest predecessor, as in the plain O(n^2) loop.
     best: list[tuple[int, int] | None] = []
     prev: list[int | None] = []
+    by_major: dict[int, tuple[tuple[int, int], int]] = {}  # ma -> ((score), -j)
+    by_label: dict[tuple[int, int], tuple[tuple[int, int], int]] = {}
     for i, (_, ma, mi, dot) in enumerate(cands):
         score: tuple[int, int] | None = (1, 0) if mi in (0, 1) else None
         back: int | None = None
-        for j in range(i):
-            bj = best[j]
-            if bj is None:
-                continue
-            _, lma, lmi, _ = cands[j]
-            step = (ma == lma + 1 and mi in (0, 1)) or (ma == lma and mi == lmi + 1)
-            jump = dot and lma + 1 < ma <= lma + _MAX_JUMP and mi in (0, 1)
-            if not (step or jump):
-                continue
-            s = (bj[0] + 1, bj[1] - (ma - lma - 1 if jump else 0))
+        options: list[tuple[tuple[int, int], int]] = []  # (new score, -j)
+        if mi in (0, 1):
+            if (b := by_major.get(ma - 1)) is not None:
+                options.append(((b[0][0] + 1, b[0][1]), b[1]))
+            if dot:
+                for lma in range(ma - _MAX_JUMP, ma - 1):
+                    if (b := by_major.get(lma)) is not None:
+                        options.append(((b[0][0] + 1, b[0][1] - (ma - lma - 1)), b[1]))
+        if mi and (b := by_label.get((ma, mi - 1))) is not None:
+            options.append(((b[0][0] + 1, b[0][1]), b[1]))
+        if options:
+            s, neg_j = max(options)
             if score is None or s > score:
-                score, back = s, j
+                score, back = s, -neg_j
         best.append(score)
         prev.append(back)
+        if score is not None:
+            key = (score, -i)
+            if ma not in by_major or key > by_major[ma]:
+                by_major[ma] = key
+            if (ma, mi) not in by_label or key > by_label[(ma, mi)]:
+                by_label[(ma, mi)] = key
     ends = [i for i, b in enumerate(best) if b is not None]
     if not ends:
         return []
@@ -227,16 +241,25 @@ def _split_long(text: str, para: Paragraph, idx: int, settings: Settings) -> lis
             grp = words[k : k + target]
             pieces.append((a + grp[0].start(), a + grp[-1].end()))
     labels = [para.label] if para.label else []
+    # words from the start of a piece to the end of another, without re-counting
+    # the slice each time (Held points of 100k+ words made that quadratic)
+    words = [count_words(text[a:b]) for a, b in pieces]
+    gaps = [count_words(text[pieces[k][1] : pieces[k + 1][0]]) for k in range(len(pieces) - 1)]
+
+    def span_words(first: int, last: int) -> int:
+        return sum(words[first : last + 1]) + sum(gaps[first:last])
+
     units: list[_Unit] = []
     i = 0
     while i < len(pieces):
-        cur = [pieces[i]]
-        if units and i > 0:
-            cur = [pieces[i - 1], pieces[i]]  # one sentence of overlap
-            if count_words(text[cur[0][0] : cur[-1][1]]) > max_w:
-                cur = [pieces[i]]
+        first = i
+        if units and i > 0 and span_words(i - 1, i) <= max_w:
+            first = i - 1  # one sentence of overlap
+        cur = [pieces[k] for k in range(first, i + 1)]
+        total = span_words(first, i)
         i += 1
-        while i < len(pieces) and count_words(text[cur[0][0] : pieces[i][1]]) <= target:
+        while i < len(pieces) and total + gaps[i - 1] + words[i] <= target:
+            total += gaps[i - 1] + words[i]
             cur.append(pieces[i])
             i += 1
         s, e = cur[0][0], cur[-1][1]
