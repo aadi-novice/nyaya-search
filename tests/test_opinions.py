@@ -28,12 +28,12 @@ def test_era_c_single_opinion(settings):
     assert op.char_end == z.judgment_span[1]
 
 
-def test_era_c_two_opinions_no_phrase_is_unknown(settings):
+def test_era_c_two_opinions_beg_to_differ_is_dissent(settings):
     doc = load(ERA_C_TWO_OPINIONS)
     _, ops = run(doc, settings, ["RANJAN GOGOI"])
     assert [o.author for o in ops] == ["UDAY UMESH LALIT, J.", "PRAFULLA C. PANT, J."]
-    # "I beg to differ" is not in opinion.phrases, and majority is never positional
-    assert [o.type for o in ops] == [OpinionType.UNKNOWN, OpinionType.UNKNOWN]
+    # "I beg to differ" is a dissenting phrase; majority is never positional
+    assert [o.type for o in ops] == [OpinionType.UNKNOWN, OpinionType.DISSENTING]
     assert ops[0].char_end == ops[1].char_start
     assert doc.clean_text[ops[1].char_start :].startswith("PRAFULLA C. PANT, J. 1. I have")
 

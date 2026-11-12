@@ -69,7 +69,7 @@ phrase_window_chars = 300
 
 # Priority order: dissenting first, then concurring.
 [opinion.phrases]
-dissenting = ["I regret I am unable to agree", "dissent"]
+dissenting = ["I regret I am unable to agree", "unable to agree", "beg to differ", "dissent"]
 concurring = ["I agree", "concurring"]
 
 [acts]
@@ -82,21 +82,27 @@ max_words = 40
 
 [embed]
 model = "Qwen/Qwen3-Embedding-0.6B"
-revision = ""  # Hugging Face commit hash, pinned at Phase 1 setup
+revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"  # Hugging Face commit, pinned 2026-11-13
 dim = 1024
 query_prefix = "Instruct: Given a legal research question, retrieve Supreme Court judgment passages that answer it\nQuery: "
 
 [rerank]
 model = "Qwen/Qwen3-Reranker-0.6B"
-revision = ""  # Hugging Face commit hash, pinned at Phase 1 setup
+revision = "e61197ed45024b0ed8a2d74b80b4d909f1255473"  # Hugging Face commit, pinned 2026-11-13
 instruction = "Given a legal research question, judge whether this Supreme Court judgment passage helps answer it"
 fallback_model = "cohere/rerank-5-fast"
+
+# Local encoder run-time settings (RTX 2060, 6 GB).
+[encoders]
+rerank_batch_size = 4     # pairs per reranker forward pass; keeps long chunks inside 6 GB VRAM
+embed_batch_size = 16     # chunks per embedder forward pass during nyaya-build embed
+max_tokens = 8000         # G6 over_model_limit: embedded text longer than this fails the gate
 
 [retrieval]
 keyword_k = 50
 vector_k = 50
 rrf_k = 60
-rerank_candidates = 100
+rerank_candidates = 50  # 100 took ~7.4 s on the RTX 2060 (decision 2026-11-13)
 final_k = 8
 ef_search = 100
 expand_rank_offset = 0.5

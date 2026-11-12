@@ -9,9 +9,9 @@ Canonical forms (design, Technical Plan step 6 and file 24):
     air:1999:3750         AIR 1999 SC 3750
     cnr:escr010004242025  ESCR010004242025
 
-The Supplement year is the year printed in the citation (the design's example
-"scr:2005:s6:72 for [2006] SUPP. 6 ..." pairs two different years; the printed
-year is the one a reader types, and it matches the year in `S_` paths).
+The Supplement year is the year printed in the citation (design step 6): the
+one a reader types, and the year in `S_` paths. The router and the citation
+check use `find_citations` from this module, so all three agree.
 
 Only SCR, neutral and CNR aliases are built: the metadata has no SCC or AIR
 fields. Aliases are built only for loaded paths, and an alias that would

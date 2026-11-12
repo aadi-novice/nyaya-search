@@ -616,8 +616,10 @@ zone then falls back to the whole clean text, and the document is flagged
 *   **Aliases** map each citation form of a judgment to its `path`. The
     canonical forms (produced by `canonical_citation()`, file 24) are:
     *   SCR: `scr:2025:1:230` for `[2025] 1 S.C.R. 230` or `2025 (1) SCR 230`;
-    *   SCR Supplement: `scr:2005:s6:72` for `[2006] SUPP. 6 S.C.R. 72`
-        style citations. Supplement paths (`S_…`) all date from before
+    *   SCR Supplement: `scr:2006:s6:72` for `[2006] SUPP. 6 S.C.R. 72`
+        style citations. The year is the one printed in the citation, which
+        is what a reader types and what `S_` paths carry (corrected
+        2026-11-13; an earlier draft paired two different years). Supplement paths (`S_…`) all date from before
         2010 (none from 2010 on, measured), but the form keeps them
         distinct from regular volumes when older eras are added;
     *   neutral: `insc:2025:31` for `2025 INSC 31` and `2025INSC31` (the
@@ -1882,7 +1884,7 @@ to.
             2010–2026.
     *   **`canonical_citation(s)`** turns each form into one canonical
         string, matching the forms in Technical Plan step 6:
-        `scr:2025:1:230`, `scr:2005:s6:72` (Supplement), `insc:2025:31`,
+        `scr:2025:1:230`, `scr:2006:s6:72` (Supplement, printed year), `insc:2025:31`,
         `scc:2009:8:751`, `air:1999:3750`, `cnr:escr010004242025`.
         `nc_display` values have no spaces (`2025INSC719`), and the pattern
         accepts both forms.

@@ -5,76 +5,52 @@ A question containing an SCR, neutral-citation or CNR pattern takes the
 citations are recognised by the linker but have no alias rows (the metadata
 holds no SCC or AIR fields), so they never trigger a lookup.
 
-The patterns are the ones in design file 24 (`link/aliases.py`). Until that
-module lands, this file carries its own copy for the three lookup kinds; the
-`finder` argument of `route()` lets the pipeline pass
-`nyaya.link.aliases.find_citations` instead, so both agree on one pattern set.
-Matching is case-insensitive (people type "2025 insc 31"); canonical strings
-are lower case.
+There is one pattern set: `nyaya.link.aliases.find_citations` (design file
+24), which is the default finder here and the one the pipeline passes. Its
+matching is case-insensitive (people type "2025 insc 31") and its canonical
+strings are lower case, so the router, the alias table and the citation check
+always agree. The `finder` argument exists so tests can inject one.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from typing import NamedTuple
 
 from nyaya.contracts import Route
+from nyaya.link.aliases import find_citations
 
 LOOKUP_KINDS = frozenset({"scr", "neutral", "cnr"})
 
 
-@dataclass(frozen=True)
-class CitationMatch:
+class CitationMatch(NamedTuple):
+    """One citation, in the `(span, kind, canonical)` shape of `find_citations`."""
+
     span: tuple[int, int]
-    kind: str  # scr | neutral | cnr (| scc | air from the linker's finder)
+    kind: str  # scr | neutral | cnr | scc | air
     canonical: str
 
 
-Finder = Callable[[str], Sequence[CitationMatch]]
-
-# [2025] 1 S.C.R. 230   |   [2006] SUPP. 6 S.C.R. 72
-_SCR_BRACKET = re.compile(
-    r"\[([0-9]{4})\]\s*(SUPP\.?\s*)?([0-9]+)\s*S\.?\s*C\.?\s*R\.?\s*([0-9]+)", re.IGNORECASE
-)
-# 2025 (1) SCR 230
-_SCR_PAREN = re.compile(r"(?<![0-9])([0-9]{4})\s*\(([0-9]+)\)\s*SCR\s*([0-9]+)", re.IGNORECASE)
-# 2025 INSC 31   |   2025INSC31
-_NEUTRAL = re.compile(r"(?<![0-9])([0-9]{4})\s*INSC\s*([0-9]+)", re.IGNORECASE)
-# ESCR010004242025
-_CNR = re.compile(r"\b[A-Z]{4}[0-9]{12}\b", re.IGNORECASE)
+Finder = Callable[[str], Sequence[tuple[tuple[int, int], str, str]]]
 
 
-def find_lookup_citations(text: str) -> list[CitationMatch]:
+def find_lookup_citations(text: str, finder: Finder = find_citations) -> list[CitationMatch]:
     """SCR, neutral and CNR citations in `text`, in text order, one per canonical form."""
-    found: list[CitationMatch] = []
-    for m in _SCR_BRACKET.finditer(text):
-        year, supp, vol, page = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
-        volume = f"s{vol}" if supp else str(vol)
-        found.append(CitationMatch(m.span(), "scr", f"scr:{year}:{volume}:{page}"))
-    for m in _SCR_PAREN.finditer(text):
-        year, vol, page = m.group(1), int(m.group(2)), int(m.group(3))
-        found.append(CitationMatch(m.span(), "scr", f"scr:{year}:{vol}:{page}"))
-    for m in _NEUTRAL.finditer(text):
-        found.append(CitationMatch(m.span(), "neutral", f"insc:{m.group(1)}:{int(m.group(2))}"))
-    for m in _CNR.finditer(text):
-        found.append(CitationMatch(m.span(), "cnr", f"cnr:{m.group(0).lower()}"))
-    found.sort(key=lambda c: c.span)
-    seen: set[str] = set()
     out: list[CitationMatch] = []
-    for c in found:
-        if c.canonical not in seen:
-            seen.add(c.canonical)
-            out.append(c)
+    seen: set[str] = set()
+    for span, kind, canonical in sorted(finder(text), key=lambda f: tuple(f[0])):
+        if kind in LOOKUP_KINDS and canonical not in seen:
+            seen.add(canonical)
+            out.append(CitationMatch(tuple(span), kind, canonical))  # type: ignore[arg-type]
     return out
 
 
-def lookup_canonicals(text: str, finder: Finder = find_lookup_citations) -> list[str]:
+def lookup_canonicals(text: str, finder: Finder = find_citations) -> list[str]:
     """Canonical strings of the lookup-kind citations in `text`, for `resolve_alias`."""
-    return [c.canonical for c in finder(text) if c.kind in LOOKUP_KINDS]
+    return [c.canonical for c in find_lookup_citations(text, finder)]
 
 
-def route(question: str, finder: Finder = find_lookup_citations) -> Route:
+def route(question: str, finder: Finder = find_citations) -> Route:
     """CITATION_LOOKUP if the question holds an SCR, neutral or CNR citation, else HYBRID."""
     if not isinstance(question, str):
         raise TypeError(f"question must be a string, got {type(question).__name__}")
