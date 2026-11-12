@@ -1,7 +1,8 @@
 """Embedder, rerankers and the startup encoder check (design file 27).
 
-* `Embedder`: Qwen3-Embedding-0.6B, fp16 on CUDA, normalised output. Queries
-  get `embed.query_prefix`; documents ("header\\n\\ntext") get no prefix.
+* `Embedder`: `embed.model` (Qwen3-Embedding-0.6B), or a model from
+  `embed.alternatives` (BAAI/bge-m3), fp16 on CUDA, normalised output. Queries
+  get the model's query prefix; documents ("header\\n\\ntext") get none.
 * `QwenReranker`: Qwen3-Reranker-0.6B through `transformers`
   (`AutoModelForCausalLM`, fp16). Each (question, header + text) pair is
   formatted with the model-card template and `rerank.instruction`; the score
@@ -54,29 +55,82 @@ def _revision(rev: str) -> str | None:
 
 # --- embedder ----------------------------------------------------------------------
 
+# Tokenizer padding side per embedder. Qwen3-Embedding pools the last token, so
+# it pads on the left; bge-m3 pools the first ([CLS]) token, so it must pad on
+# the right. kaggle/embed_corpus.py keeps a copy (tests/test_kaggle.py).
+PADDING_SIDE = {"BAAI/bge-m3": "right"}
+DEFAULT_PADDING_SIDE = "left"
+
+
+def padding_side(model_name: str) -> str:
+    return PADDING_SIDE.get(model_name, DEFAULT_PADDING_SIDE)
+
+
+@dataclass(frozen=True)
+class EmbedProfile:
+    """What it takes to run one embedder: `embed.*`, or one of `embed.alternatives`."""
+
+    model: str
+    revision: str
+    dim: int
+    query_prefix: str
+
+    @property
+    def padding_side(self) -> str:
+        return padding_side(self.model)
+
+
+def embed_profile(settings: Settings, model_name: str | None = None) -> EmbedProfile:
+    """The profile of `model_name` (default: `embed.model`); KeyError if not configured."""
+    e = settings.embed
+    if model_name is None or model_name == e.model:
+        return EmbedProfile(e.model, e.revision, e.dim, e.query_prefix)
+    alt = e.alternatives.get(model_name)
+    if alt is None:
+        known = [e.model, *e.alternatives]
+        raise KeyError(f"embedder {model_name!r} is not configured; known: {known}")
+    return EmbedProfile(model_name, alt.revision, alt.dim, alt.query_prefix)
+
+
+def embed_profiles(settings: Settings) -> list[EmbedProfile]:
+    """`embed.model` first, then each of `embed.alternatives`."""
+    return [embed_profile(settings)] + [
+        embed_profile(settings, m) for m in settings.embed.alternatives if m != settings.embed.model
+    ]
+
 
 class _Encoder(Protocol):
     def encode(self, sentences: list[str], **kwargs: Any) -> Any: ...
 
 
 class Embedder:
-    """Qwen3-Embedding: `embed_documents` (no prefix) and `embed_query` (with prefix)."""
+    """`embed_documents` (no prefix) and `embed_query` (with the model's query prefix).
 
-    def __init__(self, settings: Settings, model: _Encoder | None = None, device: str = "cuda"):
+    The model is `embed.model` unless `model_name` names one of `embed.alternatives`.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        model: _Encoder | None = None,
+        device: str = "cuda",
+        model_name: str | None = None,
+    ):
         self.settings = settings
-        self.model_name = settings.embed.model
-        self.query_prefix = settings.embed.query_prefix
-        self.dim = settings.embed.dim
+        self.profile = embed_profile(settings, model_name)
+        self.model_name = self.profile.model
+        self.query_prefix = self.profile.query_prefix
+        self.dim = self.profile.dim
         if model is None:
             import torch
             from sentence_transformers import SentenceTransformer
 
             model = SentenceTransformer(
                 self.model_name,
-                revision=_revision(settings.embed.revision),
+                revision=_revision(self.profile.revision),
                 device=device,
                 model_kwargs={"dtype": torch.float16},
-                processor_kwargs={"padding_side": "left"},
+                processor_kwargs={"padding_side": self.profile.padding_side},
             )
         self.model = model
 
