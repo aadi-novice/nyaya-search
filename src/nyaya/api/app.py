@@ -2,6 +2,7 @@
 
 Endpoints:
     POST /ask                                AskRequest -> AskResponse
+    POST /search                             AskRequest -> SearchResponse (no LLM)
     GET  /judgment/{path}?highlight=chunk_id JudgmentRecord + the chunk's span
     GET  /health                             active version, models, fallback
     /                                        the static page in web/
@@ -9,7 +10,9 @@ Endpoints:
 Each /ask runs in a worker thread under `asyncio.wait_for` with the
 `timeouts.request_s` limit. On a timeout or an exception the response has
 status `error` and the API writes the trace itself; on success the pipeline
-writes it. The server binds 127.0.0.1 only.
+writes it. /search runs the same way under the same limit and writes no trace;
+the page calls it first so the passages show while the answer is written.
+The server binds 127.0.0.1 only.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from nyaya.contracts import (
     ChunkRecord,
     JudgmentRecord,
     Route,
+    SearchResponse,
     Status,
     Versions,
 )
@@ -53,6 +57,7 @@ class Backend(Protocol):
     """What the API needs from the rest of the system."""
 
     def ask(self, request: AskRequest) -> AskResponse: ...
+    def search(self, request: AskRequest) -> SearchResponse: ...
     def get_judgment(self, path: str) -> JudgmentRecord | None: ...
     def get_chunk(self, chunk_id: str) -> ChunkRecord | None: ...
     def health(self) -> dict[str, Any]: ...
@@ -79,9 +84,14 @@ class PipelineBackend:
         self._pipeline = pipeline
         self.settings = settings
         self.deps = pipeline.build_deps(settings)
+        # the page sends /search then /ask for the same question: retrieve once
+        self.deps.retrieval_cache = pipeline.RetrievalCache()
 
     def ask(self, request: AskRequest) -> AskResponse:
         return self._pipeline.ask(request, self.deps)
+
+    def search(self, request: AskRequest) -> SearchResponse:
+        return self._pipeline.search(request, self.deps)
 
     def get_judgment(self, path: str) -> JudgmentRecord | None:
         return self.deps.engine.get_judgment(path)
@@ -109,14 +119,7 @@ def build_backend(settings: Settings) -> Backend:
     return PipelineBackend(settings)
 
 
-def _error_response(
-    backend: Backend,
-    settings: Settings,
-    request_id: str,
-    request: AskRequest,
-    notice: str,
-    elapsed_ms: float,
-) -> AskResponse:
+def _versions(backend: Backend, settings: Settings) -> Versions:
     try:
         versions = backend.versions()
     except Exception:
@@ -130,16 +133,27 @@ def _error_response(
             reranker_fallback_used=False,
             embed_model=settings.embed.model,
         )
+    return versions
+
+
+def _error_fields(
+    backend: Backend,
+    settings: Settings,
+    request_id: str,
+    request: AskRequest,
+    notice: str,
+    elapsed_ms: float,
+) -> dict[str, Any]:
     filters = request.filters.model_dump(exclude_none=True) if request.filters else {}
-    return AskResponse(
-        request_id=request_id,
-        status=Status.ERROR,
-        notices=[notice, *settings.notices],
-        route=Route.HYBRID,
-        filters_applied=filters,
-        versions=versions,
-        timings_ms={"total": elapsed_ms},
-    )
+    return {
+        "request_id": request_id,
+        "status": Status.ERROR,
+        "notices": [notice, *settings.notices],
+        "route": Route.HYBRID,
+        "filters_applied": filters,
+        "versions": _versions(backend, settings),
+        "timings_ms": {"total": elapsed_ms},
+    }
 
 
 def _wants_html(request: Request) -> bool:
@@ -169,15 +183,30 @@ def create_app(
             log.exception("pipeline failed")
             notice = ERROR_NOTICE_FAILURE
             error = f"{type(exc).__name__}: {exc}"
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        resp = _error_response(
-            backend, settings, uuid.uuid4().hex, request, notice, round(elapsed_ms, 1)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        resp = AskResponse(
+            **_error_fields(backend, settings, uuid.uuid4().hex, request, notice, elapsed_ms)
         )
         try:
             await asyncio.to_thread(backend.write_trace, request, resp, error)
         except Exception:
             log.exception("trace write failed for request %s", resp.request_id)
         return resp
+
+    @app.post("/search", response_model=SearchResponse, response_model_exclude_none=False)
+    async def search(request: AskRequest) -> SearchResponse:
+        started = time.perf_counter()
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(backend.search, request), timeout_s)
+        except TimeoutError:
+            notice = ERROR_NOTICE_TIMEOUT.format(s=f"{timeout_s:g}")
+        except Exception:
+            log.exception("search failed")
+            notice = ERROR_NOTICE_FAILURE
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        return SearchResponse(
+            **_error_fields(backend, settings, uuid.uuid4().hex, request, notice, elapsed_ms)
+        )
 
     @app.get("/judgment/{path:path}", response_model=None)
     def judgment(path: str, request: Request, highlight: str | None = None) -> Any:

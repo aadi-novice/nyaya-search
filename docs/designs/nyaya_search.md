@@ -812,6 +812,24 @@ versions          object  { index_version, config_version, prompt_version, llm_m
 timings_ms        object  per stage
 ```
 
+*   **As built (2026-11-13, branch `p4-demo`): `POST /search`.** Same
+    request body as `/ask`. It runs `/ask`'s route and retrieval (alias
+    lookup, or search, fusion, expansion and rerank) and stops before the
+    LLM. Response `SearchResponse`:
+
+```text
+request_id, notices, route, filters_applied, versions, timings_ms   as in /ask
+status            enum  passages | refused | no_match_with_filters | error
+                        passages: a citation lookup, or top score >= threshold
+                        refused: no candidates, or top score < threshold (passages = the nearest)
+passages          [ SearchPassage ]   every PassageRef field, plus rank (1 = best),
+                                      rerank_score? (null on lookup), text (the chunk's clean text),
+                                      decision_date?
+passages_note     string?
+top_score         float?
+threshold         float?            the refusal threshold in force (hybrid route)
+```
+
 ### Query pipeline, step by step
 
 **What runs on each route:**
@@ -1389,6 +1407,7 @@ to.
     *   Labelling individual sentences, with code copying the quote
         (Alternative D variant), as one evaluation run.
     *   A `/search` endpoint, so passages show before the written answer.
+        (Built 2026-11-13; see "API" under Shared contracts.)
     *   A set of probe questions that checks the threshold on every new
         index version.
     *   Using the headnote as a second source for opinion type.
@@ -2193,6 +2212,21 @@ to.
             in its worker thread and writes its own trace when it ends, so
             such a request can leave two rows (the API's `error` row and the
             pipeline's row), with different request IDs.
+    *   **As built (2026-11-13, branch `p4-demo`):**
+        *   **`search(request, deps) -> SearchResponse`** shares `ask`'s
+            route, alias lookup and hybrid retrieval (`_retrieve`: search,
+            fusion, expansion, fetch, rerank with the fallback, top
+            `final_k`); only the LLM and the check are left out. It writes
+            no trace (the `/ask` that follows is traced).
+        *   **Retrieval cache:** `Deps.retrieval_cache` (a
+            `RetrievalCache`, 64 entries, 300 s) is set by the API only.
+            `search` fills it; `ask` reads it, keyed by index version,
+            question (whitespace collapsed) and filters. A hit skips the
+            embed, search and rerank stages, carries over the reranker and
+            fallback state, and is timed as `retrieval_cache`; the trace
+            still records the retrieved chunks and rows returned. `ask`
+            alone never fills it, so the evaluation runs (which build their
+            own `Deps`) are unaffected.
 
 #### 37. `src/nyaya/api/app.py` (Create, Phase 1)
 
@@ -2208,6 +2242,9 @@ to.
     *   **Timeout:** each request runs through `asyncio.wait_for(..., 30)`
         in a thread pool. On timeout it returns `error`, and the trace is
         still written.
+    *   **As built (2026-11-13, branch `p4-demo`):** `POST /search`
+        (`AskRequest` -> `SearchResponse`) runs under the same timeout and
+        returns `error` on a timeout or an exception, without a trace.
 
 #### 38. `web/index.html`, `web/app.js`, `web/style.css` (Create, Phase 1)
 
@@ -2225,6 +2262,22 @@ to.
         `refused`, it is marked "does not answer the question".
     *   **Notices:** always visible.
     *   **Timing:** shown in small text.
+    *   **As built (2026-11-13, branch `p4-demo`):**
+        *   **Two steps:** on submit the page calls `/search` and shows the
+            ranked passages (case, citation, paragraph, page, date, score,
+            text) at once, then calls `/ask` and renders the answer above
+            them. The `/ask` reuses the retrieval through the cache.
+        *   **Citation chips:** each verified citation is a chip (`P1`,
+            case, para). Activating it scrolls to the passage card with the
+            same `chunk_id` and marks the quote inside its text; the card
+            links to `/judgment/{path}?highlight=`.
+        *   **Answer states:** unverified sentences, gaps, refusal ("No
+            relevant judgment found", passages marked "does not answer the
+            question"), `passages` notes and `no_match_with_filters` are
+            shown as before; if `/ask` fails after `/search` succeeded, the
+            passages stay and the error is shown above them.
+        *   **Filters:** year range, Act, outcome and judge, collapsed under
+            "Filters", with a count of active filters.
 
 #### 39. `src/nyaya/eval/cli.py` (Create, Phase 1)
 
