@@ -585,3 +585,13 @@ def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     assert b.versions() == versions()
     b.write_trace(req, ANSWERED, "timeout")
     assert calls == [("ask", deps), ("trace", "connect-fn", ("record", "timeout"))]
+
+
+def test_page_searches_before_it_asks() -> None:
+    """The page shows /search passages first, then renders the /ask answer."""
+    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    start = js.index("async function onSubmit")
+    body = js[start : js.index("\n}\n", start)]
+    assert 0 <= body.index('post("/search"') < body.index('post("/ask"')
+    # citation chips find their passage card by chunk_id
+    assert "focusSource(c.chunk_id, c.quote)" in js
