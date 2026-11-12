@@ -40,6 +40,7 @@ from nyaya.parse.pdf_layout import (
     era_b_margin_ids,
     is_era_b_head,
     is_margin_token,
+    page_skew,
     paragraph_starts,
     parse,
 )
@@ -179,13 +180,48 @@ def test_a_short_page_falls_back_to_the_gap_rule(cfg):
     assert era_b_margin_ids(pw, cfg) == {id(letter)}
 
 
-def test_column_edges_use_the_wider_of_local_and_page():
+def test_column_edges_ignore_a_page_part_of_quotations():
     # a quotation fills the lower half: its indent must not become the edge
     lines = [ColumnLine(0.1 + 0.04 * i, 0.12, 0.88) for i in range(8)]
     lines += [ColumnLine(0.5 + 0.04 * i, 0.20, 0.80) for i in range(10)]
-    left, right = column_edges(lines, 0.8, 0.15, 5)
+    left, right = column_edges(lines, 0.8, 0.0, 5)
     assert left == pytest.approx(0.12) and right == pytest.approx(0.88)
-    assert column_edges(lines[:3], 0.2, 0.15, 5) is None
+    assert column_edges(lines[:3], 0.2, 0.0, 5) is None
+
+
+def test_column_edges_follow_the_skew():
+    # the left edge drifts from 0.088 at the top to 0.060 at the bottom (1979)
+    lines = [ColumnLine(0.1 + 0.05 * i, 0.088 - 0.035 * 0.05 * i, 0.83) for i in range(16)]
+    left, _ = column_edges(lines, 0.1, -0.035, 5)
+    assert left == pytest.approx(0.088, abs=0.003)
+    left, _ = column_edges(lines, 0.85, -0.035, 5)
+    assert left == pytest.approx(0.088 - 0.035 * 0.75, abs=0.003)
+
+
+def test_page_skew_from_the_letter_column(cfg):
+    pw = page_with([])
+    for i, ch in enumerate("ABCDEFGH"):  # the column leans left going down
+        x = 26 - 3.5 * i
+        y = 70 + 70 * i
+        pw.words.append(Word(x, y, x + 8, y + 10, ch, 100 + i, 0))
+    assert page_skew(pw, cfg) == pytest.approx(-3.5 / W / (70 / H), rel=0.01)
+    assert page_skew(page_with([]), cfg) == 0.0
+
+
+def test_skewed_page_letters_are_removed(cfg):
+    # body starts at 0.088 at the top and 0.060 at the bottom; the letter A at
+    # the top (x1 0.067) is left of the top edge though right of the bottom one
+    pw = PageWords(0, W, H)
+    for i in range(30):
+        x0 = W * (0.088 - 0.035 * 0.025 * i)
+        pw.words += body_line(BODY, x0, 60 + 18 * i, i, 0)
+    letters = []
+    for i, ch in enumerate("ABCDEFGH"):
+        x0 = W * (0.040 - 0.035 * 0.1 * i)
+        y = 62 + 0.1 * H * i
+        letters.append(Word(x0, y, x0 + 0.027 * W, y + 10, ch, 200 + i, 0))
+    pw.words += letters
+    assert {id(w) for w in letters} <= era_b_margin_ids(pw, cfg)
 
 
 # --- running heads -----------------------------------------------------------------
@@ -611,3 +647,20 @@ def test_doc_processor_parses_era_b_and_names_era_a_skips(settings):
     old = proc(row("1955_1_1_2", 1955, "a.tar"))
     assert old.era == "out_of_scope" and not old.chunks
     assert old.skipped == [("1955_1_1_2", "parse", "era_out_of_scope", ERA_A_REASON)]
+
+
+@pytest.mark.parametrize(
+    "bench",
+    [
+        "[0, G. PALEKAR AND A. ALAGIRISWAMI, JJ,]",
+        "[ H. R. KHANNA, R. S. SARKARIA AND JASWANT SINGH, JJ.].",
+        "tS. MURTAZA FAZAL ALI, P. s. KAILASAM AND A. D. KosHAL, JJ.J",
+        "[V. R. KRISHNA IYER, J.]",
+    ],
+)
+def test_era_b_bench_lines_with_ocr_damage(bench, settings):
+    text = ERA_B_TEXT.replace("[D. A. DESAI AND R. B. MISRA, JJ.]", bench)
+    doc = parsed_from_text("1985_2_937_939", Era.B, text.format(delivered="JUDGMENT", author=""))
+    z = zone(doc, settings)
+    assert Zone.HEADER not in z.missing
+    assert doc.clean_text[: z.header_span[1]].endswith(bench)
