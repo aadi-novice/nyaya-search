@@ -45,7 +45,7 @@ from difflib import SequenceMatcher
 
 import pymupdf
 
-from nyaya.config import ConfigError, Settings
+from nyaya.config import ConfigError, EraB, Settings
 from nyaya.contracts import Era, ParsedDoc
 
 Band = tuple[float, float]
@@ -314,10 +314,13 @@ def remove_furniture(
     top: Band,
     bottom: Band,
     patterns: Sequence[str],
+    heads: Sequence[set[int]] | None = None,
 ) -> list[list[Line]]:
     """Drop running heads, footers and page numbers that sit in the bands.
 
-    `sizes` holds each page's (width, height).
+    `sizes` holds each page's (width, height). `heads` (Era B) holds, per
+    page, the ids of lines already found to be running heads: they are
+    dropped like the heads found here, and so are their wrapped second lines.
     """
     widths = [w for w, _ in sizes]
     heights = [h for _, h in sizes]
@@ -335,9 +338,11 @@ def remove_furniture(
     out: list[list[Line]] = []
     for i, lines in enumerate(lines_by_page):
         page_no = str(first_printed + i)
-        drop: set[int] = set()
+        drop: set[int] = set(heads[i]) if heads is not None else set()
         trimmed: dict[int, Line] = {}
         for ln in banded[i]:
+            if id(ln) in drop:
+                continue
             if (
                 matches_head(ln.text, patterns)
                 or letters_key(ln.text) in repeats
@@ -427,20 +432,324 @@ def rejoin_hyphens(rows: list[tuple[int, list[str]]]) -> list[tuple[int, list[st
     return out
 
 
-def build_text(rows: Sequence[tuple[int, list[str]]], first_printed: int):
+def build_text(
+    rows: Sequence[tuple[int, list[str]]],
+    first_printed: int,
+    para_starts: Sequence[bool] | None = None,
+):
+    """Clean text and position map. With `para_starts` (Era B), a blank line
+    goes before each row flagged as starting a paragraph."""
     parts: list[str] = []
     pmap: list[tuple[int, int]] = []
     offset = 0
-    for page, toks in rows:
+    for i, (page, toks) in enumerate(rows):
         if not toks:
             continue
         line = " ".join(toks)
         if parts:
-            offset += 1  # the "\n" before this line
+            sep = "\n\n" if para_starts is not None and para_starts[i] else "\n"
+            offset += len(sep)  # the line break(s) before this line
+            parts.append(sep)
         pmap.append((offset, first_printed + page))
         parts.append(line)
         offset += len(line)
-    return "\n".join(parts), pmap
+    return "".join(parts), pmap
+
+
+# --- Era B -----------------------------------------------------------------------
+
+# The volume head printed with OCR noise: "[1985] 2 S.C.R.", "(1971) 2 S.C.R •".
+_SCR_HEAD_ANY = re.compile(
+    r"[\[(]\s*\d{4}\s*[\])J]\s*(?:SUPP\.?\s*)?\d*\s*S\s*\.?\s*C\s*\.?\s*R\b", re.I
+)
+_HEAD_KEYS = ("courtreport", "supremecourt", "reports")
+# OCR forms of digits in a printed page number ("l43" for 143).
+_OCR_DIGITS = str.maketrans({"l": "1", "I": "1", "!": "1", "O": "0", "o": "0"})
+HEAD_ROWS = 2  # rows at the top of a page that may hold the running head
+
+
+def _alnum(text: str) -> str:
+    return "".join(ch for ch in text if ch.isalnum())
+
+
+def is_margin_token(text: str, letters: frozenset[str]) -> bool:
+    """A margin letter as the Era B OCR gives it, or a speck.
+
+    At most 3 characters, holding one letter or digit from `letters` ("B'",
+    "c", "8") or none at all (".", "~-", "'"). A bracketed token ("(c)",
+    "(1)") is a list marker, never a margin letter.
+    """
+    if len(text) > 3 or ("(" in text and ")" in text):
+        return False
+    core = _alnum(text)
+    return core == "" or (len(core) == 1 and core in letters)
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnLine:
+    """A body text line: vertical centre and extent as page fractions."""
+
+    yc: float
+    x0: float
+    x1: float
+
+
+def column_lines(pw: PageWords, letters: frozenset[str], min_words: int = 4) -> list[ColumnLine]:
+    """Text lines of `min_words` or more words, margin tokens at either end left out."""
+    groups: dict[tuple[int, int], list[Word]] = {}
+    for w in pw.words:
+        groups.setdefault((w.block, w.line), []).append(w)
+    out = []
+    for ws in groups.values():
+        ws = sorted(ws, key=lambda w: w.x0)
+        while ws and is_margin_token(ws[0].text, letters):
+            ws = ws[1:]
+        while ws and is_margin_token(ws[-1].text, letters):
+            ws = ws[:-1]
+        if len(ws) >= min_words:
+            yc = (min(w.y0 for w in ws) + max(w.y1 for w in ws)) / 2 / pw.height
+            out.append(ColumnLine(yc, ws[0].x0 / pw.width, ws[-1].x1 / pw.width))
+    return out
+
+
+def _quantile(sorted_vals: Sequence[float], q: float) -> float:
+    return sorted_vals[min(len(sorted_vals) - 1, max(0, round(q * (len(sorted_vals) - 1))))]
+
+
+def column_edges(
+    lines: Sequence[ColumnLine], yc: float, window: float, min_lines: int
+) -> Band | None:
+    """(left, right) edge of the body column near height `yc`, or None.
+
+    An edge is the 10th percentile of the line starts (90th of the line
+    ends), so indented first lines and short last lines lie inside it. It is
+    measured over the lines within `window` of `yc` (a skewed scan moves the
+    column across the page) and over the whole page, and the wider of the two
+    is used: where block quotations fill the window, the local edge is the
+    quotation's, and a list marker such as "(c)" at the true edge would look
+    like a margin letter. Fewer than `min_lines` lines on the page: None.
+    """
+    if len(lines) < min_lines:
+        return None
+    left = _quantile(sorted(c.x0 for c in lines), 0.1)
+    right = _quantile(sorted(c.x1 for c in lines), 0.9)
+    near = [c for c in lines if abs(c.yc - yc) <= window]
+    if len(near) >= min_lines:
+        left = min(left, _quantile(sorted(c.x0 for c in near), 0.1))
+        right = max(right, _quantile(sorted(c.x1 for c in near), 0.9))
+    return left, right
+
+
+def era_b_margin_ids(pw: PageWords, cfg: EraB) -> set[int]:
+    """ids of the margin letters (and margin specks) on an Era B page.
+
+    A margin token (`is_margin_token`) whose box lies in `cfg.left_x` or
+    `cfg.right_x` is removed when it lies outside the body column by at least
+    `cfg.column_gap`: wholly left of the left edge or right of the right edge.
+    The column, not the gap to the nearest word, decides, because PyMuPDF
+    often puts the letter on the body line ("D communicated to the ...") and
+    OCR specks touch it. When the page has too few text lines to measure a
+    column, a letter (not a speck) must stand MIN_MARGIN_GAP points clear of
+    other words instead.
+    """
+    letters = MARGIN_LETTERS | frozenset(cfg.ocr_letters)
+    lines = column_lines(pw, letters)
+    out: set[int] = set()
+    for w in pw.words:
+        if not is_margin_token(w.text, letters):
+            continue
+        fx0, fx1 = w.x0 / pw.width, w.x1 / pw.width
+        if not (in_band(cfg.left_x, fx0, fx1) or in_band(cfg.right_x, fx0, fx1)):
+            continue
+        yc = (w.y0 + w.y1) / 2 / pw.height
+        edges = column_edges(lines, yc, cfg.column_window, cfg.min_column_lines)
+        if edges is None:
+            if _alnum(w.text) and neighbour_gap(w, pw.words) >= MIN_MARGIN_GAP:
+                out.add(id(w))
+        elif fx1 <= edges[0] - cfg.column_gap or fx0 >= edges[1] + cfg.column_gap:
+            out.add(id(w))
+    return out
+
+
+def _page_number_token(text: str, printed: int) -> bool:
+    t = text.strip(".,;:'\"()[]{}-~*").translate(_OCR_DIGITS)
+    return t.isdigit() and abs(int(t) - printed) <= PAGE_NUMBER_SLACK
+
+
+def _upper_share(text: str) -> float:
+    letters = [c for c in text if c.isalpha()]
+    return sum(c.isupper() for c in letters) / len(letters) if letters else 0.0
+
+
+def is_era_b_head(
+    text: str, printed: int, page_index: int, cfg: EraB, patterns: Sequence[str]
+) -> bool:
+    """A running head row: page number at either end, the reports' name, or a case title.
+
+    The case-title form ("STATE OF KERALA v. A. LAKSHMIKUTTY [SEN, J.]")
+    counts on pages after the first only, where no title block is printed.
+    """
+    toks = text.split()
+    if not toks:
+        return False
+    if _page_number_token(toks[0], printed) or _page_number_token(toks[-1], printed):
+        return True
+    key = letters_key(text)
+    if matches_head(text, patterns) or _SCR_HEAD_ANY.search(text):
+        return True
+    if any(k in key for k in _HEAD_KEYS):
+        return True
+    return (
+        page_index > 0
+        and re.search(cfg.title_head_regex, text) is not None
+        and _upper_share(text) >= cfg.min_head_upper_share
+    )
+
+
+def _rows_of(lines: Sequence[Line]) -> list[list[Line]]:
+    """Lines grouped into rows (sharing a baseline), top to bottom."""
+    rows: list[list[Line]] = []
+    for ln in sorted(lines, key=lambda ln: ln.yc):
+        if rows:
+            first = rows[-1][0]
+            h = min(first.y1 - first.y0, ln.y1 - ln.y0)
+            if h > 0 and _v_overlap(first.y0, first.y1, ln.y0, ln.y1) >= 0.5 * h:
+                rows[-1].append(ln)
+                continue
+        rows.append([ln])
+    return rows
+
+
+def _row_text(row: Sequence[Line]) -> str:
+    return " ".join(ln.text for ln in sorted(row, key=lambda ln: ln.x0))
+
+
+def era_b_head_ids(
+    lines: Sequence[Line],
+    height: float,
+    printed: int,
+    page_index: int,
+    cfg: EraB,
+    patterns: Sequence[str],
+) -> set[int]:
+    """ids of the lines forming the running head (and a lone page number at
+    the foot) of an Era B page.
+
+    Lines are grouped into rows (the head prints the page number, the title
+    and the volume as separate pieces on one baseline). Only the first
+    HEAD_ROWS rows are tested, from the top down to the first that is not a
+    head, and only those within `cfg.top_y[1]` of the
+    page height below the page's first text line: some 1970-1985 PDFs place
+    the scanned page in the middle of a letter-size sheet, so the head can
+    sit at 20% of the sheet's height. For the same reason the last row is
+    dropped when it is only the printed page number, wherever it sits.
+    """
+    rows = _rows_of(lines)
+    if not rows:
+        return set()
+    text_top = min(ln.y0 for ln in rows[0])
+    out: set[int] = set()
+    for row in rows[:HEAD_ROWS]:
+        if (min(ln.yc for ln in row) - text_top) / height > cfg.top_y[1]:
+            break
+        if not is_era_b_head(_row_text(row), printed, page_index, cfg, patterns):
+            break  # the head is the top of the page: nothing below body text is one
+        out.update(id(ln) for ln in row)
+    last = rows[-1]
+    if len(last) == 1 and len(rows) > 1 and is_page_number_line(last[0], printed):
+        out.add(id(last[0]))
+    return out
+
+
+def paragraph_starts(
+    rows: Sequence[tuple[int, Line]], widths: Sequence[float], cfg: EraB
+) -> list[bool]:
+    """For each (page, row), whether it starts a paragraph (Era B).
+
+    "Indented" means by `cfg.paragraph_indent` to `cfg.paragraph_indent_max`
+    of the page width; the margin is the page's lower-quartile row start. A
+    row starts a paragraph when:
+
+    * it is indented relative to the next row on its page (a first-line
+      indent; for the last row of a page, relative to the margin), unless it
+      ends short of the page's right edge and is aligned with a row above it
+      that does not start a paragraph (the last line of a block quotation,
+      before the text resumes at the margin; a first line runs to the right
+      edge);
+    * or it is indented relative to the margin and to the row above (an
+      indented line after a full one: "1. Leave granted." on its own line);
+    * or the two rows above are both indented relative to it and the row
+      just above does not start a paragraph (the text after a block
+      quotation; not the line after an indented first line, as in "The
+      Judgment of the Court was delivered by" / "GROVER, J. These two
+      appeals ...").
+    """
+    margins: dict[int, float] = {}
+    rights: dict[int, float] = {}
+    for p in {p for p, _ in rows}:
+        xs = sorted(r.x0 for q, r in rows if q == p)
+        margins[p] = xs[len(xs) // 4]
+        ends = sorted(r.x1 for q, r in rows if q == p)
+        rights[p] = ends[(3 * len(ends)) // 4]
+    out: list[bool] = []
+    for k, (p, row) in enumerate(rows):
+        w = widths[p]
+        lo, hi = cfg.paragraph_indent * w, cfg.paragraph_indent_max * w
+
+        def same(j: int, p: int = p) -> Line | None:
+            return rows[j][1] if 0 <= j < len(rows) and rows[j][0] == p else None
+
+        nxt, prev, prev2 = same(k + 1), same(k - 1), same(k - 2)
+        ref = nxt.x0 if nxt is not None else margins[p]
+        start = lo <= row.x0 - ref <= hi
+        short = row.x1 < rights[p] - lo  # a quotation is indented on the right too
+        if start and short and prev is not None and abs(row.x0 - prev.x0) < lo / 2:
+            start = out[k - 1]
+        if not start and prev is not None:
+            start = lo <= row.x0 - margins[p] <= hi and row.x0 - prev.x0 >= lo
+        if not start and prev is not None and prev2 is not None and not out[k - 1]:
+            start = min(prev.x0, prev2.x0) - row.x0 >= lo
+        out.append(start)
+    return out
+
+
+def _parse_era_b(
+    pages: list[PageWords], path: str, n_pages: int, first_printed: int, settings: Settings
+) -> ParsedDoc:
+    cfg = settings.era_b
+    for pw in pages:
+        ids = era_b_margin_ids(pw, cfg)
+        pw.words = [w for w in pw.words if id(w) not in ids]
+    # Lines of OCR specks only ("~--~", "·'") carry no text.
+    lines_by_page = [[ln for ln in group_lines(pw.words) if _alnum(ln.text)] for pw in pages]
+    heads = [
+        era_b_head_ids(lines, pw.height, first_printed + i, i, cfg, settings.running_head_patterns)
+        for i, (lines, pw) in enumerate(zip(lines_by_page, pages, strict=True))
+    ]
+    lines_by_page = remove_furniture(
+        lines_by_page,
+        [(pw.width, pw.height) for pw in pages],
+        first_printed,
+        cfg.top_y,
+        cfg.bottom_y,
+        settings.running_head_patterns,
+        heads,
+    )
+    rows = [(i, row) for i, lines in enumerate(lines_by_page) for row in merge_rows(lines)]
+    starts = paragraph_starts(rows, [pw.width for pw in pages], cfg)
+    # rejoin_hyphens passes the first item through; the row index keeps the flags.
+    joined = rejoin_hyphens([(k, [w.text for w in row.words]) for k, (_, row) in enumerate(rows)])
+    text, pmap = build_text(
+        [(rows[k][0], toks) for k, toks in joined], first_printed, [starts[k] for k, _ in joined]
+    )
+    return ParsedDoc(
+        path=path,
+        era=Era.B,
+        clean_text=text,
+        position_map=pmap,
+        pages=n_pages,
+        clean_text_version=settings.versions.clean_text,
+    )
 
 
 # --- entry point -----------------------------------------------------------------
@@ -454,6 +763,8 @@ def parse(pdf_bytes: bytes, path: str, era: Era, settings: Settings) -> ParsedDo
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         n_pages = doc.page_count
         pages = page_words(doc)
+    if era is Era.B:
+        return _parse_era_b(pages, path, n_pages, first_printed, settings)
     if era is Era.C:
         left, right = margin_bands(settings)
         drop_margin_letters(pages, left, right)
