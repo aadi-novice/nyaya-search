@@ -8,10 +8,16 @@ Subcommands and the phase in which each is first needed:
     size-steps      Phase 2   G4 size steps in temporary schemas
     bm25-trigger    Phase 2   Postgres full-text search against bm25s
     tune-threshold  Phase 2   refusal thresholds (G5)
-    answers, latency, judge-validate, lawyer-export, lawyer-import
-                    Phase 3   (not built yet)
+    answers         Phase 3   G1, G2, G5, G8, G9 over the dev, unanswerable and
+                              adversarial sets (resumable across days)
+    latency         Phase 3   G7: p50 / p95 of a fixed query set, warm, one at a time
+    judge-validate  Phase 3   Cohen's kappa of the judge against the hand labels
+    lawyer-export   Phase 3   a seeded sample of answers to CSV and HTML
+    lawyer-import   Phase 3   the lawyer's ratings into eval_runs (never a gate)
 
-Exit codes: 0 success; 1 a gate failed (size-steps); 2 usage or setup error.
+Exit codes: 0 success; 1 a gate failed (size-steps, answers, latency,
+judge-validate); 2 usage or setup error. An `answers` session that stops
+early (free quota used up, or --limit) exits 0 and prints how to resume.
 """
 
 from __future__ import annotations
@@ -29,12 +35,8 @@ from nyaya.eval.retrieval import METHODS
 
 NOT_BUILT = {
     "g6-holdout": "Phase 2",
-    "answers": "Phase 3",
-    "latency": "Phase 3",
-    "judge-validate": "Phase 3",
-    "lawyer-export": "Phase 3",
-    "lawyer-import": "Phase 3",
 }
+SETS = ("dev", "unanswerable", "adversarial")
 
 
 def parse_years(text: str) -> list[int]:
@@ -87,6 +89,31 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--unanswerable", type=Path, default=DATASETS_DIR / "unanswerable_v1.jsonl")
     h.add_argument("--rerankers", default="qwen,cohere")
     h.add_argument("--dry-run", action="store_true", help="report only; do not write")
+
+    a = sub.add_parser("answers", help="G1, G2, G5, G8, G9 answer evaluation (Phase 3)")
+    a.add_argument("--dev", type=Path, default=DATASETS_DIR / "dev_v1.jsonl")
+    a.add_argument("--unanswerable", type=Path, default=DATASETS_DIR / "unanswerable_v1.jsonl")
+    a.add_argument("--adversarial", type=Path, default=DATASETS_DIR / "adversarial_v1.jsonl")
+    a.add_argument("--sets", default=",".join(SETS), help=f"some of {','.join(SETS)}")
+    a.add_argument("--run-id", default=None, help="resume this run (skips finished questions)")
+    a.add_argument("--limit", type=int, default=None, help="at most N new questions this session")
+    a.add_argument("--redo-errors", action="store_true", help="redo questions that ended in error")
+
+    lat = sub.add_parser("latency", help="G7: p50 / p95 end-to-end time (Phase 3)")
+    lat.add_argument("--dataset", type=Path, default=DATASETS_DIR / "dev_v1.jsonl")
+    lat.add_argument("--count", type=int, default=None, help="default: latency.query_count")
+    lat.add_argument("--warmup", type=int, default=None, help="default: latency.warmup")
+
+    jv = sub.add_parser("judge-validate", help="Cohen's kappa of the judge (Phase 3)")
+    jv.add_argument("--labels", type=Path, default=DATASETS_DIR / "hand_labels_v1.jsonl")
+
+    le = sub.add_parser("lawyer-export", help="sample answers for the lawyer review (Phase 3)")
+    le.add_argument("--run-id", default=None, help="the answers run (default: the latest)")
+    le.add_argument("--out-dir", type=Path, default=None, help="default: eval/runs/lawyer/<run>")
+
+    li = sub.add_parser("lawyer-import", help="the lawyer's ratings into eval_runs (Phase 3)")
+    li.add_argument("--run-id", default=None, help="the answers run (default: the latest)")
+    li.add_argument("--csv", type=Path, default=None, help="default: <export dir>/ratings.csv")
 
     for name, phase in NOT_BUILT.items():
         sub.add_parser(name, help=f"{phase} (not built yet)")
@@ -270,12 +297,318 @@ def cmd_tune_threshold(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+# --- Phase 3 ------------------------------------------------------------------------------
+
+
+def _log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _judge_with_pacing(settings: Settings, clock: Any) -> tuple[Any, Any]:
+    """The judge, paced to `judge.rpm` with the [answers] 429 backoff; and its wrapper."""
+    from nyaya.eval.judge import Judge
+    from nyaya.eval.ratelimit import RateLimitedCompleter
+
+    holder: dict[str, Any] = {}
+    a = settings.answers
+
+    def wrap(llm: Any) -> Any:
+        holder["llm"] = RateLimitedCompleter(
+            llm,
+            clock=clock,
+            rpm=settings.judge.rpm,
+            retries=a.rate_limit_retries,
+            backoff_base_s=a.backoff_base_s,
+            backoff_max_s=a.backoff_max_s,
+        )
+        return holder["llm"]
+
+    judge = Judge.from_settings(settings, wrap=wrap)
+    return judge, holder["llm"]
+
+
+def cmd_answers(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import UTC, datetime
+
+    from nyaya.eval import answers as A
+    from nyaya.eval.ratelimit import PausableClock
+    from nyaya.eval.runs import new_run_id
+    from nyaya.pipeline import build_deps
+
+    sets = [x.strip() for x in args.sets.split(",") if x.strip()]
+    bad = [x for x in sets if x not in SETS]
+    if bad or not sets:
+        raise ValueError(f"unknown sets {bad}; expected some of {list(SETS)}")
+    paths = {
+        "dev": args.dev if "dev" in sets else None,
+        "unanswerable": args.unanswerable if "unanswerable" in sets else None,
+        "adversarial": args.adversarial if "adversarial" in sets else None,
+    }
+    for name, path in paths.items():
+        if path is not None and not path.exists():
+            hint = " (until dev_v1 exists, try --dev eval/datasets/dev_draft_v0.jsonl)"
+            raise FileNotFoundError(f"{name} set not found: {path}{hint if name == 'dev' else ''}")
+    questions = A.load_questions(paths["dev"], paths["unanswerable"], paths["adversarial"])
+    datasets = {k: v.stem for k, v in paths.items() if v is not None}
+
+    results = A.ResultsFile(args.run_id or new_run_id("answers"))
+    meta = results.read_meta()
+    if args.run_id and not meta:
+        raise FileNotFoundError(f"no answers run {args.run_id!r} under {A.ANSWERS_DIR}")
+    if meta and meta.get("datasets") != datasets:
+        raise ValueError(
+            f"run {results.run_id} used datasets {meta.get('datasets')}, not {datasets}; "
+            "pass the same --dev/--unanswerable/--adversarial/--sets to resume"
+        )
+
+    clock = PausableClock()
+    judge, judge_llm = _judge_with_pacing(settings, clock)  # fail fast, before the models
+    started = datetime.now(UTC)
+    deps = build_deps(settings)
+    if meta.get("index_version") not in (None, deps.index_version):
+        raise ValueError(
+            f"run {results.run_id} was on index {meta['index_version']}, "
+            f"the active index is {deps.index_version}; start a new run"
+        )
+    if (settings.secrets.judge_model or "") == (settings.secrets.llm_model or ""):
+        _log("warning: the judge model is the answer model (G2 asks for a different family)")
+    ask_fn, answer_llm = A.instrument(deps, settings, clock)
+    runner = A.Runner(ask_fn, deps.engine.get_chunks, judge, answer_llm, judge_llm)
+    meta = {
+        "run_id": results.run_id,
+        "datasets": datasets,
+        "index_version": deps.index_version,
+        "sessions": meta.get("sessions", []),
+    }
+    results.write_meta(meta)
+    progress = A.run_session(
+        questions, runner, results, limit=args.limit, redo_errors=args.redo_errors, log=_log
+    )
+    meta["sessions"].append(
+        A.session_entry(
+            settings,
+            started_at=started,
+            progress=progress,
+            answer_llm=answer_llm,
+            judge_llm=judge_llm,
+            index_version=deps.index_version,
+        )
+    )
+    results.write_meta(meta)
+    return _finish_answers(settings, questions, results, progress, meta, deps.index_version)
+
+
+def _finish_answers(
+    settings: Settings,
+    questions: Sequence[Any],
+    results: Any,
+    progress: Any,
+    meta: dict[str, Any],
+    index_version: str,
+    conn: Any = None,
+) -> int:
+    """Summarise the run; write `eval_runs` once every question is finished."""
+    from nyaya.eval import answers as A
+    from nyaya.eval.runs import save_run
+
+    wanted = {q.id for q in questions}
+    records = [r for k, r in results.load().items() if k in wanted]
+    s = settings
+    metrics = A.summarize(
+        records,
+        min_supported_share=s.answers.min_supported_share,
+        min_unanswerable_refused_share=s.answers.min_unanswerable_refused_share,
+        max_wrong_refusal_share=s.refusal.max_wrong_refusal_share,
+    )
+    metrics["sessions"] = meta["sessions"]
+    out: dict[str, Any] = {"run_id": results.run_id, "progress": progress.as_dict()}
+    if progress.remaining > 0:
+        summary = results.dir / "summary.json"
+        summary.write_text(json.dumps(metrics, indent=2, default=str) + "\n", encoding="utf-8")
+        out["note"] = f"{progress.remaining} questions left; resume with --run-id {results.run_id}"
+        _print({**out, "partial_summary": str(summary)})
+        return 0
+    datasets = meta["datasets"]
+    config = {
+        "datasets": datasets,
+        "judge_model": s.secrets.judge_model,
+        "judge_prompt": s.judge.prompt,
+        "llm_model": s.secrets.llm_model,
+        "prompt_version": s.versions.prompt,
+        "results": str(results.path),
+    }
+
+    def save(c: Any) -> tuple[str, Path]:
+        return save_run(
+            "answers",
+            metrics,
+            config=config,
+            dataset_version="+".join(datasets.values()),
+            index_version=index_version,
+            conn=c,
+            run_id=results.run_id,
+        )
+
+    if conn is not None:
+        _, path = save(conn)
+    else:
+        with _connect(settings) as c:
+            _, path = save(c)
+    gates = {g: metrics[g]["passed"] for g in ("g1", "g2", "g5", "g9")}
+    _print({**out, "file": str(path), "gates": gates, "g8": metrics["g8"]["by_type"]})
+    return 0 if all(gates.values()) else 1
+
+
+def cmd_latency(args: argparse.Namespace, settings: Settings) -> int:
+    from nyaya.eval import latency as L
+    from nyaya.eval.answers import instrument
+    from nyaya.eval.ratelimit import PausableClock, Throttle
+    from nyaya.eval.runs import save_run
+    from nyaya.pipeline import build_deps
+
+    items = read_jsonl(args.dataset, DevItem)
+    queries = L.fixed_query_set(items, args.count or settings.latency.query_count)
+    deps = build_deps(settings)
+    ask_fn, _ = instrument(deps, settings, pace_llm=False)
+    clock = PausableClock()
+    a = settings.answers
+    samples = L.run_latency(
+        queries,
+        ask_fn,
+        warmup=settings.latency.warmup if args.warmup is None else args.warmup,
+        request_limit_s=settings.timeouts.request_s,
+        throttle=Throttle(a.llm_rpm, clock),
+        clock=clock,
+        retries=a.rate_limit_retries,
+        backoff_base_s=a.backoff_base_s,
+        backoff_max_s=a.backoff_max_s,
+    )
+    metrics = L.summarize(samples, p95_target_s=settings.latency.p95_target_s)
+    with _connect(settings) as conn:
+        run_id, path = save_run(
+            "latency",
+            metrics,
+            config={"count": len(queries), "llm_model": settings.secrets.llm_model},
+            dataset_version=args.dataset.stem,
+            index_version=deps.index_version,
+            conn=conn,
+        )
+    keys = ("requests", "failures", "p50_s", "p95_s", "passed")
+    _print(
+        {
+            "run_id": run_id,
+            "file": str(path),
+            **{k: metrics[k] for k in keys},
+            "stages_s": metrics["stages_s"],
+        }
+    )
+    return 0 if metrics["passed"] else 1
+
+
+def cmd_judge_validate(args: argparse.Namespace, settings: Settings) -> int:
+    from nyaya.eval.judge import read_hand_labels, validate
+    from nyaya.eval.ratelimit import PausableClock
+    from nyaya.eval.runs import save_run
+    from nyaya.models.encoders import document_text
+    from nyaya.search.postgres import PostgresSearch
+
+    labels = read_hand_labels(args.labels)
+    judge, judge_llm = _judge_with_pacing(settings, PausableClock())
+    j = settings.judge
+    with _connect(settings) as conn:
+        engine = PostgresSearch(settings=settings, conn=conn)
+        chunks = engine.get_chunks(sorted({lab.chunk_id for lab in labels}))
+        passages = {c.chunk_id: document_text(c.header, c.text) for c in chunks}
+        metrics = validate(
+            labels, passages, judge, min_kappa=j.min_kappa, min_labels=j.min_hand_labels
+        )
+        metrics["tokens"] = dict(judge_llm.tokens)
+        run_id, path = save_run(
+            "judge-validate",
+            metrics,
+            config={"judge_model": judge.model, "judge_prompt": j.prompt},
+            dataset_version=args.labels.stem,
+            index_version=engine.index_version,
+            conn=conn,
+        )
+    keys = ("labels", "scored", "judge_errors", "kappa", "passed", "missing_chunks")
+    _print({"run_id": run_id, "file": str(path), **{k: metrics[k] for k in keys}})
+    return 0 if metrics["passed"] else 1
+
+
+def _answers_run(run_id: str | None, root: Path | None = None) -> tuple[Any, list[dict]]:
+    """An answers run's results (the latest run when `run_id` is None)."""
+    from nyaya.eval.answers import ANSWERS_DIR, ResultsFile
+
+    root = root or ANSWERS_DIR
+    if not run_id:
+        runs = sorted(p.parent.name for p in root.glob("*/meta.json"))
+        if not runs:
+            raise FileNotFoundError(f"no answers runs under {root}; run `answers` first")
+        run_id = runs[-1]
+    results = ResultsFile(run_id, root)
+    if not results.exists():
+        raise FileNotFoundError(f"no answers run {run_id!r} under {root}")
+    return results, list(results.load().values())
+
+
+def cmd_lawyer_export(args: argparse.Namespace, settings: Settings) -> int:
+    from nyaya.eval.lawyer import LAWYER_DIR, export
+
+    results, records = _answers_run(args.run_id)
+    out_dir = args.out_dir or LAWYER_DIR / results.run_id
+    info = export(
+        records,
+        out_dir,
+        run_id=results.run_id,
+        size=settings.lawyer.sample_size,
+        seed=settings.lawyer.seed,
+    )
+    _print(info)
+    return 0
+
+
+def cmd_lawyer_import(args: argparse.Namespace, settings: Settings) -> int:
+    from nyaya.eval.lawyer import LAWYER_DIR, RUBRIC_VERSION, read_ratings, summarize_ratings
+    from nyaya.eval.runs import save_run
+
+    results, _ = _answers_run(args.run_id)
+    csv_path = args.csv or LAWYER_DIR / results.run_id / "ratings.csv"
+    metrics = summarize_ratings(read_ratings(csv_path))
+    meta = results.read_meta()
+    with _connect(settings) as conn:
+        run_id, path = save_run(
+            "lawyer-review",
+            metrics,
+            config={"answers_run": results.run_id, "rubric": RUBRIC_VERSION, "csv": str(csv_path)},
+            dataset_version="+".join(meta.get("datasets", {}).values()) or None,
+            index_version=meta.get("index_version"),
+            conn=conn,
+        )
+    means = {q: v["mean"] for q, v in metrics["questions"].items()}
+    _print(
+        {
+            "run_id": run_id,
+            "file": str(path),
+            "answers": metrics["answers"],
+            "means": means,
+            "gate": False,
+        }
+    )
+    return 0
+
+
 COMMANDS = {
     "build-devset": cmd_build_devset,
     "retrieval": cmd_retrieval,
     "size-steps": cmd_size_steps,
     "bm25-trigger": cmd_bm25_trigger,
     "tune-threshold": cmd_tune_threshold,
+    "answers": cmd_answers,
+    "latency": cmd_latency,
+    "judge-validate": cmd_judge_validate,
+    "lawyer-export": cmd_lawyer_export,
+    "lawyer-import": cmd_lawyer_import,
 }
 
 

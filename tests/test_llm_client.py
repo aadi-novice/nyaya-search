@@ -242,3 +242,18 @@ def test_reasoning_effort_is_sent_only_when_set():
         "s", "u", timeout=1
     )
     assert fake2.calls[0]["reasoning_effort"] == "low"
+
+
+def test_last_usage_is_kept_for_the_eval_harness():
+    with_usage = reply(json.dumps(GOOD))
+    with_usage.usage = SimpleNamespace(prompt_tokens=120, completion_tokens=30, total_tokens=150)
+    bad = reply("not json")
+    bad.usage = SimpleNamespace(prompt_tokens=100, completion_tokens=5, total_tokens=105)
+    llm, _ = client(with_usage, reply(json.dumps(GOOD)), bad)
+    llm.complete_json("s", "u", timeout=5)
+    assert llm.last_usage == {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
+    llm.complete_json("s", "u", timeout=5)
+    assert llm.last_usage is None  # the provider sent no usage
+    with pytest.raises(LLMBadJSON):
+        llm.complete_json("s", "u", timeout=5)
+    assert llm.last_usage["total_tokens"] == 105  # a bad reply still used tokens

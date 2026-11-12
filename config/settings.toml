@@ -157,6 +157,12 @@ seed = 11
 
 [judge]
 min_kappa = 0.6
+min_hand_labels = 30        # judge-validate refuses to report a pass on fewer
+prompt = "judge_v1"         # prompts/judge_v1.md
+max_output_tokens = 600
+reasoning_effort = ""       # e.g. "low" for a reasoning judge model; "" sends nothing
+timeout_s = 30
+rpm = 20                    # pacing for the free tier; 429s back off as in [answers]
 
 [bm25_trigger]
 min_gap_points = 3.0
@@ -167,6 +173,17 @@ seed = 7
 
 [latency]
 p95_target_s = 15.0
+query_count = 30   # the first 30 questions of the set, by id
+warmup = 2         # requests run first, not counted
+
+# nyaya-eval answers (Phase 3)
+[answers]
+min_supported_share = 0.90             # G2
+min_unanswerable_refused_share = 0.80  # G5 (the wrong-refusal limit is refusal.max_wrong_refusal_share)
+llm_rpm = 20             # answer-LLM pacing for the free tier
+rate_limit_retries = 6   # 429 retries before the run stops (resume later)
+backoff_base_s = 5.0     # doubled per retry; a Retry-After header can lengthen it
+backoff_max_s = 120.0
 
 [lawyer]
 sample_size = 30

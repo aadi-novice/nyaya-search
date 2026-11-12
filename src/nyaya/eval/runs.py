@@ -26,11 +26,16 @@ def save_run(
     schema_name: str | None = None,
     conn: Any = None,
     runs_dir: Path | str = RUNS_DIR,
+    run_id: str | None = None,
 ) -> tuple[str, Path]:
-    """Write `<runs_dir>/<run_id>.json`; also insert into `eval_runs` when `conn` is given."""
+    """Write `<runs_dir>/<run_id>.json`; also insert into `eval_runs` when `conn` is given.
+
+    `run_id` defaults to a new id. A run saved again under the same id (an
+    `answers` run finished, then extended) replaces its row's config and metrics.
+    """
     if conn is not None and index_version is None and schema_name is None:
         raise ValueError("eval_runs needs index_version or schema_name")
-    run_id = new_run_id(kind)
+    run_id = run_id or new_run_id(kind)
     record = {
         "run_id": run_id,
         "kind": kind,
@@ -49,7 +54,10 @@ def save_run(
             conn.execute(
                 "INSERT INTO eval_runs "
                 "(run_id, dataset_version, index_version, schema_name, config, metrics) "
-                "VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb)",
+                "VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb) "
+                "ON CONFLICT (run_id) DO UPDATE SET dataset_version = EXCLUDED.dataset_version, "
+                "index_version = EXCLUDED.index_version, schema_name = EXCLUDED.schema_name, "
+                "config = EXCLUDED.config, metrics = EXCLUDED.metrics",
                 (
                     run_id,
                     dataset_version,

@@ -2350,6 +2350,62 @@ to.
         chunk_id, label}`.
     *   **`latency.py`:** runs a fixed query set warm, one request at a time,
         and reports the 95th percentile against `latency.p95_target_s`.
+*   **As built (2026-11-12, branch `p3-answer-eval`):**
+    *   **Free-tier pacing (`eval/ratelimit.py`):** answer and judge calls
+        are spaced to `answers.llm_rpm` and `judge.rpm`. HTTP 429 backs off
+        exponentially from `answers.backoff_base_s` (capped at
+        `answers.backoff_max_s`, lengthened by a `Retry-After` header), for
+        `answers.rate_limit_retries` retries; then the session stops without
+        recording that question. Waits are taken off the pipeline's clock, so
+        they never count against `timeouts.request_s`.
+    *   **Resume:** one line per finished question in
+        `eval/runs/answers/<run_id>/results.jsonl`, keyed by run and question
+        id; `--run-id` skips finished questions, `--limit` caps a session,
+        and `--redo-errors` redoes `error` results. A resume must use the
+        same datasets and the same active index. `meta.json` records each
+        session's date, provider host, models and tokens (from the
+        provider's `usage`, which `LLMClient.last_usage` now keeps). The
+        `eval_runs` row is written, under the answers run id, only when every
+        question is finished (`save_run` upserts on `run_id`).
+    *   **G1:** rule breaks come from the trace; every shown citation's quote
+        is re-checked against its chunk, and any failure fails G1.
+    *   **G2:** the judge sees `header` + blank line + `text` for each cited
+        chunk, best verdict wins and judging stops at the first `supported`.
+        Pairs the judge could not label (`error`) are left out of the share
+        and counted.
+    *   **G5:** `passages` and `error` results are left out of both shares;
+        `no_match_with_filters` counts as a refusal. Targets:
+        `answers.min_unanswerable_refused_share` (0.80) and
+        `refusal.max_wrong_refusal_share` (0.10).
+    *   **Wrong answers** (a verified sentence not rated `supported`; a
+        `partial` counts): a **hallucination** if no retrieved passage (the
+        reranked top `retrieval.final_k`) rates it `supported` or `partial`;
+        else a **retrieval error** if the question has gold paragraphs and
+        none was retrieved (the `retrieval.py` paragraph rule); else a
+        **reasoning error**, which includes questions without gold.
+    *   **G9:** each adversarial `expect` as in `eval/datasets/README.md`,
+        plus no failed re-check, plus a refusal or the "not legal advice"
+        notice for `advice` and `false_premise`.
+    *   **Judge:** `prompts/judge_v1.md` asks for `{"label", "reason"}` and
+        nothing else; the parse is strict (exact keys, known label). A bad
+        reply is retried once with the parse error; a second bad reply, or a
+        network error, is `error`. Settings: `judge.prompt`,
+        `judge.max_output_tokens`, `judge.reasoning_effort`,
+        `judge.timeout_s`, `judge.rpm`. Checked on 2026-11-12 against the
+        configured Groq judge on three hand-made pairs: all three labels
+        (supported, partial, unsupported) came back as expected, first try.
+    *   **`judge-validate`:** unweighted Cohen's kappa over the three
+        labels; it passes only with kappa ≥ `judge.min_kappa` on at least
+        `judge.min_hand_labels` (30) scored pairs. Passages are read from the
+        active index by `chunk_id`. A missing or empty
+        `hand_labels_v1.jsonl` is a setup error with a message.
+    *   **`latency`:** the first `latency.query_count` (30) questions by id,
+        after `latency.warmup` (2) unscored requests. Percentiles are
+        nearest-rank; a request over `timeouts.request_s` or ending in
+        `error` is a failure and counts as infinitely slow. Pacing happens
+        between requests, outside the timed region, and a rate-limited
+        request is retried rather than sampled. Stages are reported as
+        retrieve, rerank, llm, check and other, from `timings_ms`.
 
 #### 46. `eval/lawyer_review/rubric_v1.md`, `src/nyaya/eval/lawyer.py` (Create, Phase 3)
 
@@ -2364,6 +2420,19 @@ to.
         with `lawyer.seed`, to CSV and HTML.
     *   **`lawyer-import`:** reads the ratings CSV into `eval_runs`.
     *   **Status:** qualitative evidence, never a gate.
+*   **As built (2026-11-12, branch `p3-answer-eval`):**
+    *   **Sample:** answered questions (at least one verified sentence) of
+        one answers run (default: the latest), sorted by id, sampled with
+        `random.Random(lawyer.seed)`.
+    *   **Output:** `eval/runs/lawyer/<answers run>/` holds `ratings.csv`
+        (`review_id, question_id, question, answer, right_paragraphs,
+        law_correct, nothing_missing, usable, comment, reviewer`; UTF-8 with
+        BOM so spreadsheet programs open it cleanly), `review.html` (one
+        standalone page, no scripts, light and dark) and a copy of the rubric.
+    *   **Import:** each rating must be 1, 2, 3 or blank, or the row is
+        named and the import fails. Means, counts and the share of 3s per
+        question go to `eval_runs` as a `lawyer-review` run linked to the
+        answers run. The command exits 0 whatever the ratings.
 
 #### 47. `README.md` (Modify, Phase 1)
 
