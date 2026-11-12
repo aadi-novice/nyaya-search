@@ -93,6 +93,14 @@ revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"  # Hugging Face commit, pi
 dim = 1024
 query_prefix = "Instruct: Given a legal research question, retrieve Supreme Court judgment passages that answer it\nQuery: "
 
+# The challenger compared by scripts/select_models.py and embedded on Kaggle
+# (kaggle/embed_corpus.py). To switch the build and the API to it, copy its
+# name, revision, dim and query_prefix over the four [embed] values above.
+[embed.alternatives."BAAI/bge-m3"]
+revision = "5617a9f61b028005a4858fdac845db406aefb181"  # Hugging Face commit, pinned 2026-11-13
+dim = 1024
+query_prefix = ""  # bge-m3 dense retrieval takes no query instruction
+
 [rerank]
 model = "Qwen/Qwen3-Reranker-0.6B"
 revision = "e61197ed45024b0ed8a2d74b80b4d909f1255473"  # Hugging Face commit, pinned 2026-11-13

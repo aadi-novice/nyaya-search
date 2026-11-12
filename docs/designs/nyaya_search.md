@@ -2076,6 +2076,34 @@ to.
     *   **Reference vectors:** it also writes
         `build/vectors/reference/passages.json` and
         `build/vectors/reference/vectors.npy`.
+*   **As built (2026-11-13, branch `p4-kaggle`):**
+    *   **`embed_corpus.py`** is self-contained (numpy, torch,
+        sentence-transformers). Per model it writes `<model-dir>/vectors/`
+        (`<year>.npy`, `.ids.txt`, `.sha1.txt`, `reference/`),
+        `state/embed_<year>.json` (the same stamp as `nyaya-build embed`, so a
+        copied year counts as done) and `embed_report.json` (GPU, versions,
+        time, chunks/s, peak VRAM). Its copies of `document_text`,
+        `text_hash`, `token_batches`, the stamp and the padding table are
+        checked against the originals by `tests/test_kaggle.py`.
+    *   **`kaggle/push.py`** (official `kaggle` package, extra `kaggle`):
+        `dataset` (a private dataset of `chunks/<year>.jsonl`), `kernel` (a
+        private script kernel on `NvidiaTeslaT4`, internet on, with
+        `sentence-transformers` and `transformers` pinned to `uv.lock`),
+        `status --wait`, `download`. A `KGAT_` key is passed as
+        `KAGGLE_API_TOKEN`; credentials are never printed.
+    *   **Embedder profiles:** `[embed.alternatives."BAAI/bge-m3"]` holds the
+        challenger (revision pinned, dim 1024, no query prefix).
+        `Embedder(settings, model_name=...)` picks a profile; bge-m3 pads on
+        the right (CLS pooling), Qwen on the left (last-token pooling).
+    *   **First run (2025, 20,999 ch4 chunks, one Tesla T4, fp16, batch 32,
+        32k-token budget):** Qwen3-Embedding-0.6B 1,297 s, 16.2 chunks/s,
+        peak 4.3 GB allocated; bge-m3 453 s, 46.4 chunks/s, peak 1.8 GB.
+        About 32 minutes of GPU quota in all, including package installs and
+        model downloads (the API reported 6 hours allowed). Kaggle gave the
+        session two T4s; the script uses one. On the 18,417 chunks whose text was unchanged since
+        the local RTX 2060 embed, the Kaggle Qwen vectors reach a cosine of
+        0.9995 or more with the local ones (`encoder_check.min_cosine` is
+        0.999).
 
 #### 29. `src/nyaya/store/loader.py` (Create, Phase 1)
 
@@ -2412,6 +2440,15 @@ to.
         2060, and peak GPU memory together.
     *   **Output:** the results go to `docs/model_selection.md`. The author
         chooses, and the choice is written to config.
+*   **As built (2026-11-13, branch `p4-kaggle`):** `--vectors MODEL=DIR`
+    takes a model's document vectors from a Kaggle output folder (file 28)
+    instead of encoding them locally. The folder's reference vectors must
+    pass `startup_check` against the local embedder first; queries are always
+    embedded locally with the model's prefix, and throughput and memory come
+    from `embed_report.json` (the report's "encoded on" column says where).
+    The comparison stays in memory: no temporary schema or index version is
+    needed. Local peak memory now leaves out the reranker, which is loaded
+    first.
 
 #### 45. `src/nyaya/eval/answers.py`, `src/nyaya/eval/judge.py`, `prompts/judge_v1.md`, `src/nyaya/eval/latency.py` (Create, Phase 3)
 

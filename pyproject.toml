@@ -30,6 +30,9 @@ dependencies = [
 [project.optional-dependencies]
 eval = ["bm25s>=0.2", "scipy>=1.14"]
 dev = ["pytest>=8.3", "pytest-cov>=6.0", "ruff>=0.8"]
+# kaggle/push.py: the Kaggle dataset, kernel and output helpers
+# six: kaggle 2.2.5 imports it without declaring it
+kaggle = ["kaggle>=2.2", "six>=1.16"]
 
 [project.scripts]
 nyaya-build = "nyaya.build:main"

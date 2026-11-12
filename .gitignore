@@ -15,3 +15,4 @@ eval/runs/
 *.parquet
 !tests/fixtures/**/*.parquet
 .coverage
+kaggle_out/

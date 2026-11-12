@@ -119,11 +119,22 @@ class Quote(_Section):
     max_words: int
 
 
+class EmbedModel(_Section):
+    """An embedder other than `embed.model`: a challenger for scripts/select_models.py."""
+
+    revision: str
+    dim: int = Field(ge=1)
+    query_prefix: str
+
+
 class Embed(_Section):
     model: str
     revision: str
-    dim: int
+    dim: int = Field(ge=1)
     query_prefix: str
+    # model name -> its settings, for comparison and Kaggle runs; `model` above
+    # is the one the build and the API use
+    alternatives: dict[str, EmbedModel] = {}
 
 
 class Rerank(_Section):
@@ -265,6 +276,9 @@ class Secrets(BaseSettings):
     judge_api_key: SecretStr | None = None
     judge_model: str | None = None
     openrouter_api_key: SecretStr | None = None
+    kaggle_username: str | None = None
+    kaggle_key: SecretStr | None = None
+    kaggle_api_token: SecretStr | None = None
     hf_home: str | None = None
     # where the API runs the embedder and reranker: the local GPU, or the CPU
     # (the Docker image; slower, for demos without a GPU)
