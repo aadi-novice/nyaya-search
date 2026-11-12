@@ -1397,6 +1397,12 @@ to.
         G2 requires.
     *   **Still open:** whether Groq's daily token limit covers one judge
         run. If it does not, the run is split across days.
+    *   **Changed 2026-11-13 (author delegated the decision):** the Gemini
+        key's project returned HTTP 402 (prepaid credits depleted), so
+        answers use `openai/gpt-oss-120b` on Groq and the judge uses
+        `qwen/qwen3.8-27b` on Groq (Qwen family, still different from the
+        answer model). Gemini Flash returns once a free-tier key is
+        available; only `.env` changes.
 
 --------------------------------------------------------------------------------
 
