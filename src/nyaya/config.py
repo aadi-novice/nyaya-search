@@ -195,6 +195,14 @@ class Devset(_Section):
 
 class Judge(_Section):
     min_kappa: float
+    # judge-validate needs at least this many hand labels (design G2: 30-50)
+    min_hand_labels: int = Field(default=30, ge=1)
+    prompt: str = "judge_v1"  # prompts/<prompt>.md
+    max_output_tokens: int = Field(default=600, ge=1)
+    # sent as `reasoning_effort` to reasoning models; "" sends nothing
+    reasoning_effort: str = ""
+    timeout_s: float = Field(default=30.0, gt=0)
+    rpm: float = Field(default=20.0, ge=0)  # 0: no pacing
 
 
 class Bm25Trigger(_Section):
@@ -208,6 +216,19 @@ class EvalCfg(_Section):
 
 class Latency(_Section):
     p95_target_s: float
+    query_count: int = Field(default=30, ge=1)  # the first N questions of the set, by id
+    warmup: int = Field(default=2, ge=0)  # requests run first and not counted
+
+
+class AnswersCfg(_Section):
+    """`nyaya-eval answers` (Phase 3): targets and the free-tier pacing."""
+
+    min_supported_share: float = 0.90  # G2
+    min_unanswerable_refused_share: float = 0.80  # G5
+    llm_rpm: float = Field(default=20.0, ge=0)  # 0: no pacing
+    rate_limit_retries: int = Field(default=6, ge=0)
+    backoff_base_s: float = Field(default=5.0, ge=0)
+    backoff_max_s: float = Field(default=120.0, ge=0)
 
 
 class Lawyer(_Section):
@@ -273,6 +294,7 @@ class Settings(_Section):
     bm25_trigger: Bm25Trigger
     eval: EvalCfg
     latency: Latency
+    answers: AnswersCfg = AnswersCfg()
     lawyer: Lawyer
     build: Build
     encoder_check: EncoderCheck
