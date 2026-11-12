@@ -19,7 +19,7 @@ import itertools
 import re
 import tomllib
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from functools import lru_cache
 
 from nyaya.config import REPO_ROOT, Settings, load_settings
@@ -186,6 +186,12 @@ def canonical_act(name: str, aliases: Mapping[str, str] | None = None) -> str:
         aliases = load_act_aliases()
     prepared = _prepare_act(name)
     return aliases.get(prepared, prepared)
+
+
+def act_normalizer(settings: Settings | None = None) -> Callable[[str], str]:
+    """`canonical_act` bound to the alias file: the Act filter's normaliser (file 20)."""
+    aliases = load_act_aliases(settings)
+    return lambda name: canonical_act(name, aliases)
 
 
 def act_refs(

@@ -145,6 +145,10 @@ def yes_probability(last_logits: Any, yes_id: int, no_id: int) -> list[float]:
     return torch.nn.functional.log_softmax(pair, dim=1)[:, 1].exp().tolist()
 
 
+# PyTorch scaled-dot-product attention for the reranker (decision 2026-11-13).
+ATTN_IMPLEMENTATION: str | None = "sdpa"
+
+
 class QwenReranker:
     """Qwen3-Reranker-0.6B, local yes/no scoring (model-card recipe)."""
 
@@ -157,12 +161,13 @@ class QwenReranker:
         model: Any = None,
         tokenizer: Any = None,
         device: str = "cuda",
-        batch_size: int = 4,
+        batch_size: int | None = None,
         max_length: int = 8192,
+        attn_implementation: str | None = ATTN_IMPLEMENTATION,
     ) -> None:
         self.model_name = settings.rerank.model
         self.instruction = settings.rerank.instruction
-        self.batch_size = batch_size
+        self.batch_size = batch_size or settings.encoders.rerank_batch_size
         self.max_length = max_length
         self.device = device
         if tokenizer is None or model is None:
@@ -173,9 +178,10 @@ class QwenReranker:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name, revision=rev, padding_side="left"
             )
+            extra = {"attn_implementation": attn_implementation} if attn_implementation else {}
             model = (
                 AutoModelForCausalLM.from_pretrained(
-                    self.model_name, revision=rev, dtype=torch.float16
+                    self.model_name, revision=rev, dtype=torch.float16, **extra
                 )
                 .to(device)
                 .eval()

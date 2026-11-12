@@ -20,6 +20,7 @@ this module only through `Deps`, so tests use fakes.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -46,6 +47,8 @@ from nyaya.contracts import (
     Versions,
     Zone,
 )
+from nyaya.models.encoders import document_text
+from nyaya.search.postgres import InvalidFilter
 from nyaya.trace import TraceRecord
 
 log = logging.getLogger(__name__)
@@ -54,6 +57,7 @@ NOTE_LOOKUP = "judgment found by citation"
 NOTE_LLM_UNAVAILABLE = "no summary generated (LLM unavailable)"
 NOTE_LLM_INVALID = "no summary generated (LLM reply was invalid)"
 NOTE_ERROR = "the request failed; please try again"
+NOTE_INVALID_FILTER = "invalid filter"
 # Citation kinds that identify one judgment (design, "Router"); SCC and AIR do not.
 LOOKUP_KINDS = frozenset({"scr", "neutral", "insc", "cnr"})
 
@@ -112,6 +116,30 @@ class Deps:
     write_trace: Callable[[TraceRecord], object] = lambda record: None
     clock: Callable[[], float] = time.monotonic
     new_request_id: Callable[[], str] = field(default=lambda: uuid.uuid4().hex)
+    # opens a fresh database connection (the API's error traces use it)
+    connect: Callable[[], Any] | None = None
+    models_loaded: bool = True
+
+    def versions(self) -> Versions:
+        """The versions of this deployment (no reranker fallback assumed)."""
+        s = self.settings
+        return Versions(
+            index_version=self.index_version,
+            config_version=s.versions.config,
+            prompt_version=s.versions.prompt,
+            llm_model=self.llm.model if self.llm is not None else (s.secrets.llm_model or ""),
+            reranker_model=self.reranker.model,
+            reranker_fallback_used=False,
+            embed_model=s.embed.model,
+        )
+
+    def health(self) -> dict[str, Any]:
+        return {
+            "active_version": self.index_version,
+            "models_loaded": self.models_loaded,
+            "fallback_configured": self.fallback_reranker is not None,
+            "llm_configured": self.llm is not None,
+        }
 
 
 class RerankFailed(RuntimeError):
@@ -144,14 +172,11 @@ class _Run:
     def respond(self, status: Status, **fields: Any) -> AskResponse:
         deps, s = self.deps, self.deps.settings
         self.timings["total"] = round((deps.clock() - self.started_at) * 1000, 3)
-        versions = Versions(
-            index_version=deps.index_version,
-            config_version=s.versions.config,
-            prompt_version=s.versions.prompt,
-            llm_model=deps.llm.model if deps.llm is not None else (s.secrets.llm_model or ""),
-            reranker_model=self.reranker_model or deps.reranker.model,
-            reranker_fallback_used=self.fallback_used,
-            embed_model=s.embed.model,
+        versions = deps.versions().model_copy(
+            update={
+                "reranker_model": self.reranker_model or deps.reranker.model,
+                "reranker_fallback_used": self.fallback_used,
+            }
         )
         response = AskResponse(
             request_id=self.request_id,
@@ -185,6 +210,7 @@ class _Run:
             reranker_fallback_used=self.fallback_used,
             llm_error=t.get("llm_error"),
             timings_ms=response.timings_ms,
+            error=t.get("error"),
         )
         try:
             self.deps.write_trace(record)
@@ -260,7 +286,7 @@ def _lookup(run: _Run) -> AskResponse | None:
 
 
 def _rerank(run: _Run, question: str, chunks: Sequence[ChunkRecord]) -> list[float]:
-    docs = [f"{c.header}\n{c.text}" for c in chunks]
+    docs = [document_text(c.header, c.text) for c in chunks]
     deps = run.deps
     try:
         scores = deps.reranker.score(question, docs)
@@ -390,9 +416,13 @@ def ask(
                 return response
             run.route = Route.HYBRID
         return _hybrid(run)
-    except Exception:
-        # the traces table has no error column; the log holds the details
+    except InvalidFilter as exc:
+        # a bad filter value is the caller's mistake: a clean error, not a crash
+        run.trace["error"] = f"invalid filter: {exc}"
+        return run.respond(Status.ERROR, passages_note=f"{NOTE_INVALID_FILTER}: {exc}")
+    except Exception as exc:
         log.exception("request %s failed", run.request_id)
+        run.trace["error"] = f"{type(exc).__name__}: {exc}"
         return run.respond(Status.ERROR, passages_note=NOTE_ERROR)
 
 
@@ -413,3 +443,161 @@ def error_response(
         started_at=deps.clock() if started_at is None else started_at,
     )
     return run.respond(Status.ERROR, passages_note=note)
+
+
+# --- wiring the real components (the API's startup) ------------------------------
+
+
+class _QueryEncoder:
+    """`encode_query` over models.encoders.Embedder, one GPU call at a time."""
+
+    def __init__(self, embedder: Any, lock: threading.Lock) -> None:
+        self._embedder = embedder
+        self._lock = lock
+
+    def encode_query(self, text: str) -> Sequence[float]:
+        with self._lock:
+            return self._embedder.embed_query(text)
+
+
+class _ScoreReranker:
+    """`score(question, documents)` (input order) over a models.encoders reranker."""
+
+    def __init__(self, reranker: Any, lock: threading.Lock | None = None) -> None:
+        self._reranker = reranker
+        self._lock = lock
+        self.model = reranker.model_name
+
+    def score(self, question: str, documents: Sequence[str]) -> list[float]:
+        if self._lock is None:
+            return self._score(question, documents)
+        with self._lock:
+            return self._score(question, documents)
+
+    def _score(self, question: str, documents: Sequence[str]) -> list[float]:
+        scores_fn = getattr(self._reranker, "scores", None)
+        if callable(scores_fn):
+            return [float(x) for x in scores_fn(question, documents)]
+        out = [0.0] * len(documents)
+        for r in self._reranker.rerank(question, documents, len(documents)):
+            out[r.index] = float(r.score)
+        return out
+
+
+class _UnavailableReranker:
+    """Stands in for a local reranker that failed to load: every call goes to the fallback."""
+
+    def __init__(self, model: str, error: str) -> None:
+        self.model = model
+        self._error = error
+
+    def score(self, question: str, documents: Sequence[str]) -> list[float]:
+        raise RerankFailed(f"local reranker not loaded: {self._error}")
+
+
+class PerThreadEngine:
+    """One PostgresSearch (and so one connection) per worker thread.
+
+    psycopg connections must not run transactions from several threads at
+    once, and the API answers requests in a thread pool, so each thread gets
+    its own connection on first use. The pool's thread count bounds them.
+    """
+
+    def __init__(self, factory: Callable[[], Any]) -> None:
+        self._factory = factory
+        self._local = threading.local()
+
+    def _engine(self) -> Any:
+        engine = getattr(self._local, "engine", None)
+        if engine is None:
+            engine = self._factory()
+            self._local.engine = engine
+        return engine
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._engine(), name)
+
+
+def build_deps(settings: Settings) -> Deps:  # pragma: no cover - needs the GPU and Postgres
+    """Load the models, the engine for the active index version, and the LLM client once."""
+    from nyaya import trace
+    from nyaya.answer.llm_client import LLMClient
+    from nyaya.link.aliases import find_citations
+    from nyaya.models.encoders import (
+        CohereFallbackReranker,
+        Embedder,
+        QwenReranker,
+        startup_check,
+    )
+    from nyaya.search.expand import expand
+    from nyaya.search.fusion import rrf
+    from nyaya.search.postgres import PostgresSearch
+    from nyaya.search.router import route
+    from nyaya.store.db import connect
+    from nyaya.zone.zoner import act_normalizer
+
+    normalise_act = act_normalizer(settings)
+    first = PostgresSearch(
+        settings=settings,
+        conn=connect(settings, autocommit=True),
+        act_normalizer=normalise_act,
+    )
+    version = first.index_version
+    thresholds = first.thresholds()
+    first.conn.close()
+
+    def make_engine() -> PostgresSearch:
+        return PostgresSearch(
+            index_version=version,
+            settings=settings,
+            conn=connect(settings, autocommit=True),
+            act_normalizer=normalise_act,
+        )
+
+    gpu = threading.Lock()
+    embedder = Embedder(settings)
+    startup_check(settings, embedder)
+    models_loaded = True
+    try:
+        reranker: Any = _ScoreReranker(QwenReranker(settings), gpu)
+    except Exception as exc:
+        log.exception("local reranker failed to load; the fallback will be used")
+        reranker = _UnavailableReranker(settings.rerank.model, f"{type(exc).__name__}: {exc}")
+        models_loaded = False
+    try:
+        fallback: Any = _ScoreReranker(CohereFallbackReranker.from_settings(settings))
+    except Exception as exc:
+        log.warning("fallback reranker not configured: %s", exc)
+        fallback = None
+    try:
+        llm: Any = LLMClient.from_settings(settings)
+    except LLMUnavailable as exc:
+        log.warning("%s; answers will be passages only", exc)
+        llm = None
+
+    r = settings.retrieval
+
+    def do_expand(hits: list[SearchHit], engine: Any) -> list[SearchHit]:
+        return expand(hits, engine, r.expand_rank_offset, r.rerank_candidates)
+
+    def open_conn() -> Any:
+        return connect(settings)
+
+    return Deps(
+        settings=settings,
+        engine=PerThreadEngine(make_engine),
+        encoder=_QueryEncoder(embedder, gpu),
+        reranker=reranker,
+        fallback_reranker=fallback,
+        llm=llm,
+        route=lambda q: route(q, finder=find_citations),
+        find_citations=find_citations,
+        rrf=rrf,
+        expand=do_expand,
+        index_version=version,
+        threshold_primary=float(thresholds["qwen"] if thresholds["qwen"] is not None else 1.0),
+        threshold_fallback=float(thresholds["cohere"] if thresholds["cohere"] is not None else 1.0),
+        write_trace=lambda record: trace.write_trace(open_conn, record),
+        connect=open_conn,
+        models_loaded=models_loaded,
+    )

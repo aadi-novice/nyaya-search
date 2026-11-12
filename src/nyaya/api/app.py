@@ -65,11 +65,12 @@ class Backend(Protocol):
 class PipelineBackend:
     """The real backend: `nyaya.pipeline.ask(request, deps)` and the search engine.
 
-    Integration assumptions (see the pipeline and trace modules):
-      * `nyaya.pipeline.build_deps(settings)` loads the models and the engine
-        once and runs the startup checks;
-      * `deps.engine` is the SearchEngine (`get_judgment`, `get_chunks`);
-      * `nyaya.trace.write_trace(deps, request, response, error=...)`.
+    * `nyaya.pipeline.build_deps(settings)` loads the models and the engine
+      once and runs the startup checks;
+    * `nyaya.pipeline.ask(request, deps)` writes its own trace;
+    * `deps.engine` is the SearchEngine (`get_judgment`, `get_chunks`);
+    * error responses built here are traced with
+      `trace.write_trace(deps.connect, trace.record_from_response(...))`.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -98,7 +99,10 @@ class PipelineBackend:
     def write_trace(self, request: AskRequest, response: AskResponse, error: str | None) -> None:
         from nyaya import trace
 
-        trace.write_trace(self.deps, request, response, error=error)
+        if self.deps.connect is None:
+            log.error("no database connection for the trace of %s", response.request_id)
+            return
+        trace.write_trace(self.deps.connect, trace.record_from_response(request, response, error))
 
 
 def build_backend(settings: Settings) -> Backend:

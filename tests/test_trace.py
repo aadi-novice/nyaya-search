@@ -54,7 +54,7 @@ def test_write_trace_inserts_one_row_with_json_columns():
     assert write_trace(lambda: conn, record()) is True
     ((sql, params),) = conn.executed
     assert sql.strip().startswith("INSERT INTO traces")
-    assert sql.count("%s") == len(params) == 17 - 1  # every column but created_at
+    assert sql.count("%s") == len(params) == 18 - 1  # every column but created_at
     assert params[0] == "r1"
     jsonb = [p for p in params if isinstance(p, Jsonb)]
     assert len(jsonb) == 6  # filters, versions, retrieved, rows_returned, rule_breaks, timings

@@ -167,11 +167,19 @@ def test_embed_query_adapters():
 def test_rerank_adapter_passes_header_and_text():
     c = chunk("A#judgment#001", text="body", header="head")
 
-    class Strings:
-        def rerank(self, q, docs):
+    class Scores:
+        def scores(self, q, docs):
             return [1.0 if docs[0] == "head\n\nbody" else 0.0]
 
-    assert wiring.rerank_fn(Strings())("q", [c]) == [1.0]
+    class TopN:
+        def rerank(self, q, docs, top_n):
+            from nyaya.models.encoders import RerankResult
+
+            assert top_n == len(docs)
+            return [RerankResult(1, 0.9), RerankResult(0, 0.2)]
+
+    assert wiring.rerank_fn(Scores())("q", [c]) == [1.0]
+    assert wiring.rerank_fn(TopN())("q", [c, c]) == [0.2, 0.9]
     with pytest.raises(TypeError):
         wiring.rerank_fn(object())
 

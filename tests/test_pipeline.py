@@ -508,3 +508,106 @@ def test_lookup_chunks_rules():
     assert lookup_chunks(JUDGMENTS[JC], [issue], 3) == [issue]
     eds = [c for c in CHUNKS if c.judgment_id == JC]
     assert lookup_chunks(None, eds, 2) == eds[:2]
+
+
+# --- integration additions ------------------------------------------------------
+
+
+def test_invalid_filter_is_a_clean_error_with_trace():
+    from nyaya.search.postgres import InvalidFilter
+
+    class BadFilterEngine(FakeEngine):
+        def keyword(self, question, filters, k):
+            raise InvalidFilter("unknown outcome filter 'won'")
+
+    deps, traces = make_deps(engine=BadFilterEngine())
+    resp = ask(AskRequest(question="bail", filters=Filters(outcome="won")), deps)
+    assert resp.status is Status.ERROR
+    assert "invalid filter" in (resp.passages_note or "")
+    assert traces[-1].error.startswith("invalid filter")
+
+
+def test_unexpected_exception_records_error_in_trace():
+    class Boom(FakeEngine):
+        def keyword(self, question, filters, k):
+            raise RuntimeError("db gone")
+
+    deps, traces = make_deps(engine=Boom())
+    resp = ask(AskRequest(question="bail"), deps)
+    assert resp.status is Status.ERROR
+    assert traces[-1].error == "RuntimeError: db gone"
+
+
+def test_deps_health_and_versions():
+    deps, _ = make_deps(fallback_reranker=None, llm=None)
+    assert deps.health() == {
+        "active_version": "v2025a",
+        "models_loaded": True,
+        "fallback_configured": False,
+        "llm_configured": False,
+    }
+    v = deps.versions()
+    assert v.index_version == "v2025a"
+    assert v.reranker_model == "qwen"
+    assert v.reranker_fallback_used is False
+
+
+def test_score_reranker_adapter_keeps_input_order():
+    import threading
+
+    from nyaya.models.encoders import RerankResult
+    from nyaya.pipeline import _ScoreReranker
+
+    class TopN:
+        model_name = "cohere/x"
+
+        def rerank(self, q, docs, top_n):
+            assert top_n == len(docs)
+            return [RerankResult(2, 0.9), RerankResult(0, 0.5), RerankResult(1, 0.1)]
+
+    class Scores:
+        model_name = "qwen/x"
+
+        def scores(self, q, docs):
+            return [0.3, 0.2]
+
+    a = _ScoreReranker(TopN())
+    assert a.model == "cohere/x"
+    assert a.score("q", ["a", "b", "c"]) == [0.5, 0.1, 0.9]
+    assert _ScoreReranker(Scores(), threading.Lock()).score("q", ["a", "b"]) == [0.3, 0.2]
+
+
+def test_unavailable_reranker_raises_so_the_fallback_runs():
+    from nyaya.pipeline import _UnavailableReranker
+
+    deps, _ = make_deps(reranker=_UnavailableReranker("qwen", "no CUDA"))
+    resp = ask(AskRequest(question="speedy trial bail"), deps)
+    assert resp.versions.reranker_fallback_used is True
+
+
+def test_per_thread_engine_gives_each_thread_its_own_engine():
+    import threading
+
+    from nyaya.pipeline import PerThreadEngine
+
+    made = []
+
+    def factory():
+        e = FakeEngine()
+        made.append(e)
+        return e
+
+    pte = PerThreadEngine(factory)
+    pte.get_judgment(J1)
+    pte.get_judgment(J1)
+    t = threading.Thread(target=lambda: pte.get_judgment(J1))
+    t.start()
+    t.join()
+    assert len(made) == 2
+
+
+def test_act_normalizer_maps_aliases():
+    from nyaya.zone.zoner import act_normalizer
+
+    norm = act_normalizer(SETTINGS)
+    assert norm("Indian Penal Code, 1860") == norm("IPC")

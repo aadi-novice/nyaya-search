@@ -10,6 +10,8 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from nyaya.contracts import AskRequest, AskResponse
+
 log = logging.getLogger(__name__)
 
 _JSON_COLUMNS = frozenset(
@@ -35,6 +37,7 @@ class TraceRecord:
     reranker_fallback_used: bool = False
     llm_error: str | None = None
     timings_ms: dict[str, float] = field(default_factory=dict)
+    error: str | None = None  # why an `error` response failed (migration 002)
 
 
 _COLUMNS = list(TraceRecord.__dataclass_fields__)
@@ -42,6 +45,25 @@ _INSERT = (
     f"INSERT INTO traces ({', '.join(_COLUMNS)}) "  # fixed column names
     f"VALUES ({', '.join(['%s'] * len(_COLUMNS))})"
 )
+
+
+def record_from_response(
+    request: AskRequest, response: AskResponse, error: str | None = None
+) -> TraceRecord:
+    """A trace row for a response built outside the pipeline (the API's timeout path)."""
+    return TraceRecord(
+        request_id=response.request_id,
+        question=request.question,
+        route=response.route.value,
+        filters=response.filters_applied,
+        versions=response.versions.model_dump(),
+        status=response.status.value,
+        unverified_count=len(response.unverified),
+        gaps_count=len(response.gaps),
+        reranker_fallback_used=response.versions.reranker_fallback_used,
+        timings_ms=response.timings_ms,
+        error=error,
+    )
 
 
 def write_trace(connect: Callable[[], Any], record: TraceRecord) -> bool:

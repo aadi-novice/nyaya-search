@@ -96,6 +96,10 @@ def outcome_values(outcome_map: OutcomeMap) -> set[str]:
     return set(outcome_map.values) | {outcome_map.default}
 
 
+class InvalidFilter(ValueError):
+    """A filter value the engine cannot use (for example an unknown outcome)."""
+
+
 def resolve_outcome(value: str, outcome_map: OutcomeMap) -> str:
     """An outcome filter value: an outcome name ("allowed") or a raw disposal text."""
     v = value.strip()
@@ -104,7 +108,7 @@ def resolve_outcome(value: str, outcome_map: OutcomeMap) -> str:
     for outcome, raw in outcome_map.values.items():
         if any(v.lower() == r.lower() for r in raw):
             return outcome
-    raise ValueError(
+    raise InvalidFilter(
         f"unknown outcome filter {value!r}; expected one of {sorted(outcome_values(outcome_map))}"
     )
 
@@ -361,6 +365,10 @@ class PostgresSearch:
             (self.index_version, path),
         ).fetchall()
         return [r[0] for r in rows]
+
+    def chunks_for_judgment(self, path: str) -> list[ChunkRecord]:
+        """All chunks of one judgment, in chunk_id order (the citation lookup uses it)."""
+        return self.get_chunks(self.chunk_ids_for(path))
 
     def get_judgment(self, path: str) -> JudgmentRecord | None:
         cols = ", ".join(JUDGMENT_COLUMNS)

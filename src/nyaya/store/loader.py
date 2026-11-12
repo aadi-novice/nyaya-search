@@ -522,9 +522,15 @@ def load(
 
     if engine_factory is None:
         from nyaya.search.postgres import PostgresSearch
+        from nyaya.zone.zoner import act_normalizer
 
         def engine_factory(v: str) -> SearchEngine:
-            return PostgresSearch(index_version=v, settings=settings, conn=conn)
+            return PostgresSearch(
+                index_version=v,
+                settings=settings,
+                conn=conn,
+                act_normalizer=act_normalizer(settings),
+            )
 
     failures = db_id_check(conn, version)
     failures += check_g6(build / "chunk_metrics.json", settings)

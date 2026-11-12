@@ -455,6 +455,7 @@ def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
 
     class Deps:
         engine = Engine()
+        connect = "connect-fn"
 
         def health(self) -> dict[str, Any]:
             return {"active_version": "v2025"}
@@ -467,7 +468,8 @@ def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline.build_deps = lambda settings: deps  # type: ignore[attr-defined]
     pipeline.ask = lambda request, d: (calls.append(("ask", d)), ANSWERED)[1]  # type: ignore[attr-defined]
     trace = types.ModuleType("nyaya.trace")
-    trace.write_trace = lambda d, req, resp, error=None: calls.append(("trace", error))  # type: ignore[attr-defined]
+    trace.record_from_response = lambda req, resp, error=None: ("record", error)  # type: ignore[attr-defined]
+    trace.write_trace = lambda connect, record: calls.append(("trace", connect, record))  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "nyaya.pipeline", pipeline)
     monkeypatch.setitem(sys.modules, "nyaya.trace", trace)
     import nyaya
@@ -485,4 +487,4 @@ def test_pipeline_backend_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     assert b.health() == {"active_version": "v2025"}
     assert b.versions() == versions()
     b.write_trace(req, ANSWERED, "timeout")
-    assert calls == [("ask", deps), ("trace", "timeout")]
+    assert calls == [("ask", deps), ("trace", "connect-fn", ("record", "timeout"))]
