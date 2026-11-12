@@ -347,3 +347,55 @@ def test_meta_object_and_date(settings):
     assert chunks[0].header.startswith("X v. Y · Judgment")
     _, _, chunks = run(make_doc(body), settings, {"title": "X", "decision_date": "n/a"})
     assert chunks[0].header.startswith("X · Judgment")
+
+
+def _quoted_para_judgment() -> str:
+    """Shaped like 2025_10_631_650: para 12 quotes "22." from an earlier judgment,
+    and para 10 quotes "71."; the judgment's own paras 13-25 follow."""
+    lines = []
+    for n in range(1, 26):
+        lines.append(f"{n}. Paragraph {n} of this judgment discusses the point in some words.")
+        if n == 10:
+            lines.append("71. In Minor Irrigation v. Sahngoo Ram Arya this Court held so.")
+        if n == 12:
+            lines.append("22. It may be kept in mind that the public order is a State subject.")
+    return "\n".join(lines) + "\n"
+
+
+def test_quoted_numbered_paragraph_does_not_capture_later_labels():
+    text = _quoted_para_judgment()
+    labels = [p.label for p in find_paragraphs(text, 0, len(text))]
+    assert labels == [str(n) for n in range(1, 26)]
+    paras = {p.label: p for p in find_paragraphs(text, 0, len(text))}
+    # the quoted "22." stays inside para 12; the real para 22 is its own paragraph
+    assert "22. It may be kept in mind" in text[paras["12"].start : paras["12"].end]
+    assert text[paras["22"].start :].startswith("22. Paragraph 22 of this judgment")
+    assert text[paras["17"].start :].startswith("17. Paragraph 17")
+
+
+def test_a_lost_paragraph_is_still_skipped_over():
+    text = "1. One here.\n2. Two here.\n5. Five, after the parser lost 3 and 4.\n6. Six.\n"
+    assert [p.label for p in find_paragraphs(text, 0, len(text))] == ["1", "2", "5", "6"]
+
+
+def test_an_over_long_held_point_is_split_and_keeps_its_links(settings):
+    from nyaya.contracts import HeldPoint, Zones
+
+    sentence = "The appellant was rightly convicted on the evidence of the witnesses. "
+    body = sentence * 150  # about 1,650 words
+    text = "HELD: " + body + "[Para 12]\n12. The judgment paragraph.\n"
+    end = text.index("\n12.")
+    zones = Zones(
+        header_span=(0, 0),
+        editorial=[HeldPoint(text=text[6:end], char_start=6, char_end=end, para_refs=["12"])],
+        acts=[],
+        keywords=[],
+        judgment_span=(end + 1, len(text)),
+        missing=[],
+    )
+    doc = parsed_from_text("2015_1_1_9", Era.C, text)
+    chunks = chunk({"title": "A v. B", "decision_year": 2015}, doc, zones, [], settings)
+    ed = [c for c in chunks if c.zone is Zone.EDITORIAL]
+    assert len(ed) > 2
+    assert all(len(c.text.split()) <= settings.chunk.max_words for c in ed)
+    assert all(c.para_refs == ["12"] and "recursive_split" in c.flags for c in ed)

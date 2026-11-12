@@ -126,6 +126,9 @@ class BuildPaths:
     def vector_ids(self, year: int) -> Path:
         return self.year_file("vectors", year, ".ids.txt")
 
+    def vector_hashes(self, year: int) -> Path:
+        return self.year_file("vectors", year, ".sha1.txt")
+
     def log(self, name: str, year: int) -> Path:
         return self.root / "logs" / f"{name}_{year}"
 
@@ -676,17 +679,41 @@ def token_batches(lengths: Sequence[int], budget: int, max_batch: int) -> list[l
     return batches
 
 
-def embed_stamp(settings: Settings, ids: Sequence[str]) -> dict[str, Any]:
+def text_hash(text: str) -> str:
+    """Identity of an embedded text: equal hashes mean an equal vector can be reused."""
     import hashlib
 
-    digest = hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def embed_stamp(settings: Settings, ids: Sequence[str], hashes: Sequence[str]) -> dict[str, Any]:
+    import hashlib
+
+    rows = "".join(f"{i} {h}\n" for i, h in zip(ids, hashes, strict=True))
     return {
         "model": settings.embed.model,
         "revision": settings.embed.revision,
         "dim": settings.embed.dim,
         "n": len(ids),
-        "ids_sha256": digest,
+        "rows_sha256": hashlib.sha256(rows.encode("utf-8")).hexdigest()[:16],
     }
+
+
+def reusable_vectors(
+    paths: BuildPaths, year: int, stamp: dict[str, Any], dim: int
+) -> dict[str, np.ndarray]:
+    """{text hash: vector} from the year's previous vectors, if made by the same model."""
+    old = _read_json(paths.stamp("embed", year)) or {}
+    hfile = paths.vector_hashes(year)
+    if not (hfile.exists() and paths.vectors(year).exists()):
+        return {}
+    if any(old.get(k) != stamp[k] for k in ("model", "revision", "dim")):
+        return {}
+    hashes = hfile.read_text(encoding="utf-8").split()
+    vecs = np.load(paths.vectors(year))
+    if vecs.shape != (len(hashes), dim):
+        return {}
+    return dict(zip(hashes, vecs, strict=True))
 
 
 @dataclass
@@ -719,7 +746,8 @@ def embed(
             log.info("embed %d: no chunks file, skipped", year)
             continue
         ids, texts = read_chunk_texts(cfile)
-        stamp = embed_stamp(settings, ids)
+        hashes = [text_hash(t) for t in texts]
+        stamp = embed_stamp(settings, ids, hashes)
         old = _read_json(paths.stamp("embed", year))
         if (
             not force
@@ -749,11 +777,20 @@ def embed(
         cuda = _cuda()
         if cuda is not None:
             cuda.reset_peak_memory_stats()
-        lengths = [count_tokens(t) for t in texts]
         out = np.zeros((len(texts), settings.embed.dim), dtype=np.float32)
+        cache = {} if force else reusable_vectors(paths, year, stamp, settings.embed.dim)
+        todo = []
+        for i, h in enumerate(hashes):
+            if h in cache:
+                out[i] = cache[h]
+            else:
+                todo.append(i)
+        if cache:
+            log.info("embed %d: %d of %d vectors reused", year, len(texts) - len(todo), len(texts))
+        lengths = [count_tokens(texts[i]) for i in todo]
         t0 = time.perf_counter()
         done = 0
-        batches = token_batches(lengths, budget, batch)
+        batches = [[todo[k] for k in bt] for bt in token_batches(lengths, budget, batch)]
         for n, idx in enumerate(batches, 1):
             vecs = embedder.embed_documents([texts[i] for i in idx], batch_size=len(idx))
             out[idx] = vecs
@@ -765,7 +802,7 @@ def embed(
                     "embed %d: %d/%d chunks, %.0f s, %.1f chunks/s, peak VRAM %s",
                     year,
                     done,
-                    len(texts),
+                    len(todo),
                     el,
                     done / el if el else 0.0,
                     f"{peak:.2f} GB" if peak is not None else "n/a",
@@ -774,13 +811,14 @@ def embed(
         buf = _npy_bytes(out)
         _atomic_write_bytes(paths.vectors(year), buf)
         _atomic_write_text(paths.vector_ids(year), "".join(i + "\n" for i in ids))
+        _atomic_write_text(paths.vector_hashes(year), "".join(h + "\n" for h in hashes))
         _write_json(paths.stamp("embed", year), stamp)
         peak = cuda.max_memory_allocated() / 2**30 if cuda is not None else None
         rep = EmbedReport(
             year,
-            len(ids),
+            len(todo),
             round(seconds, 1),
-            round(len(ids) / seconds, 2) if seconds else 0.0,
+            round(len(todo) / seconds, 2) if seconds else 0.0,
             round(peak, 2) if peak is not None else None,
         )
         log.info("embed %d: %s", year, rep)

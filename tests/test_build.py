@@ -309,9 +309,23 @@ def test_embed_redoes_a_year_whose_chunks_changed(built, settings):
     lines = paths.chunks(2025).read_text(encoding="utf-8").splitlines()
     paths.chunks(2025).write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
     calls = fake.calls
+    before = dict(
+        zip(paths.vector_ids(2025).read_text().split(), np.load(paths.vectors(2025)), strict=True)
+    )
     (rep,) = b.embed(settings, [2025], paths=paths, embedder=fake, count_tokens=len)
-    assert not rep.skipped and fake.calls > calls
-    assert len(paths.vector_ids(2025).read_text().split()) == len(lines) - 1
+    # a dropped chunk needs no new vector: every other row is reused
+    assert not rep.skipped and rep.chunks == 0 and fake.calls == calls
+    ids = paths.vector_ids(2025).read_text().split()
+    assert len(ids) == len(lines) - 1
+    vecs = np.load(paths.vectors(2025))
+    assert all(np.array_equal(before[i], v) for i, v in zip(ids, vecs, strict=True))
+
+    # one changed text: only that chunk is embedded again
+    rec = ChunkRecord.model_validate_json(lines[0])
+    lines[0] = rec.model_copy(update={"header": rec.header + " (edited)"}).model_dump_json()
+    paths.chunks(2025).write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    (rep,) = b.embed(settings, [2025], paths=paths, embedder=fake, count_tokens=len)
+    assert rep.chunks == 1 and fake.calls == calls + 1
 
 
 def test_loader_reads_only_the_requested_years(built, settings):

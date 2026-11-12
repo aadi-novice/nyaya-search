@@ -112,27 +112,50 @@ def find_paragraphs(text: str, start: int, end: int) -> list[Paragraph]:
     needs its full stop (a wrapped "13 of the Act" is not a paragraph), and
     may skip ahead by at most 10 (a paragraph the parser lost). Text before
     the first paragraph joins it.
+
+    Among all such in-order sequences of candidate lines, the longest one is
+    kept (fewest skipped numbers on a tie). Taking candidates greedily let a
+    numbered paragraph quoted from another judgment ("22. ..." inside para 12)
+    capture the label of every paragraph after it, because the judgment's own
+    13-21 then looked like steps backwards.
     """
-    found: list[tuple[int, str]] = []
-    last: tuple[int, int] | None = None
+    cands: list[tuple[int, int, int, bool]] = []
     for m in _PARA.finditer(text, start, end):
         ma, mi, dot = int(m.group(1)), int(m.group(2) or 0), bool(m.group(3))
-        if not mi and not dot:
-            continue
-        if last is None:
-            ok = mi in (0, 1)
-        else:
-            lma, lmi = last
-            ok = (
-                (ma == lma + 1 and mi in (0, 1))
-                or (ma == lma and mi == lmi + 1)
-                or (dot and lma + 1 < ma <= lma + _MAX_JUMP and mi in (0, 1))
-            )
-        if ok:
-            found.append((m.start(), f"{ma}.{mi}" if mi else str(ma)))
-            last = (ma, mi)
-    if not found:
+        if mi or dot:
+            cands.append((m.start(), ma, mi, dot))
+    # best[i] = (paragraphs, -skipped numbers) of the best sequence ending at i
+    best: list[tuple[int, int] | None] = []
+    prev: list[int | None] = []
+    for i, (_, ma, mi, dot) in enumerate(cands):
+        score: tuple[int, int] | None = (1, 0) if mi in (0, 1) else None
+        back: int | None = None
+        for j in range(i):
+            bj = best[j]
+            if bj is None:
+                continue
+            _, lma, lmi, _ = cands[j]
+            step = (ma == lma + 1 and mi in (0, 1)) or (ma == lma and mi == lmi + 1)
+            jump = dot and lma + 1 < ma <= lma + _MAX_JUMP and mi in (0, 1)
+            if not (step or jump):
+                continue
+            s = (bj[0] + 1, bj[1] - (ma - lma - 1 if jump else 0))
+            if score is None or s > score:
+                score, back = s, j
+        best.append(score)
+        prev.append(back)
+    ends = [i for i, b in enumerate(best) if b is not None]
+    if not ends:
         return []
+    k: int | None = max(ends, key=lambda i: (best[i], -i))
+    chain: list[int] = []
+    while k is not None:
+        chain.append(k)
+        k = prev[k]
+    found = [
+        (cands[i][0], f"{cands[i][1]}.{cands[i][2]}" if cands[i][2] else str(cands[i][1]))
+        for i in reversed(chain)
+    ]
     paras = []
     for i, (s, label) in enumerate(found):
         e = found[i + 1][0] if i + 1 < len(found) else end
@@ -444,7 +467,21 @@ def chunk(
     if zones.issue_span is not None:
         emit(Zone.ISSUE, *zones.issue_span)
     for hp in zones.editorial:
-        emit(Zone.EDITORIAL, hp.char_start, hp.char_end, para_refs=list(hp.para_refs))
+        if count_words(text[hp.char_start : hp.char_end]) <= settings.chunk.max_words:
+            emit(Zone.EDITORIAL, hp.char_start, hp.char_end, para_refs=list(hp.para_refs))
+            continue
+        # A Held point over chunk.max_words (long Era C headnotes whose numbered
+        # points were not split, up to 150k words) is cut at sentence boundaries
+        # like a long paragraph; every piece keeps the point's para_refs.
+        whole = Paragraph(None, hp.char_start, hp.char_end)
+        for u in _split_long(text, whole, 0, settings):
+            emit(
+                Zone.EDITORIAL,
+                u.start,
+                u.end,
+                para_refs=list(hp.para_refs),
+                flags=["recursive_split"],
+            )
 
     spans = [(o.char_start, o.char_end, o.author, o.type) for o in opinions] or [
         (zones.judgment_span[0], zones.judgment_span[1], None, None)

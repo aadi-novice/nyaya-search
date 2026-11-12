@@ -20,7 +20,7 @@ build = "build"
 
 [versions]
 clean_text = "ct1"
-chunker = "ch2"  # ch2 (2026-11-13): Era C title-case "Held:" fallback in the zoner
+chunker = "ch3"  # ch3 (2026-11-13): paragraph numbers chosen as the longest in-order sequence; ch2: Era C title-case "Held:" fallback
 config = "cfg1"
 prompt = "answer_v1"
 
