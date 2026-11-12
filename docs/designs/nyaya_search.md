@@ -1389,8 +1389,14 @@ to.
     scale-out path), or both deferred? (Escalated, E2.)
 *   **The final test set:** what source, size and mix of question types?
     IndicLegalQA (CC BY 4.0) is a candidate, if it can be downloaded.
-*   **Answer LLM and judge model:** which free hosted models? Do their daily
-    limits cover one run?
+*   **Answer LLM and judge model:** decided by the author on 2026-11-12.
+    *   **Answer:** `gemini-3.8-flash`, through Google's OpenAI-compatible
+        endpoint. Its free tier may use prompts to improve Google's
+        products, and the privacy notice names this.
+    *   **Judge:** `openai/gpt-oss-120b` on Groq, a different model family as
+        G2 requires.
+    *   **Still open:** whether Groq's daily token limit covers one judge
+        run. If it does not, the run is split across days.
 
 --------------------------------------------------------------------------------
 
