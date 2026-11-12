@@ -1389,8 +1389,14 @@ to.
     scale-out path), or both deferred? (Escalated, E2.)
 *   **The final test set:** what source, size and mix of question types?
     IndicLegalQA (CC BY 4.0) is a candidate, if it can be downloaded.
-*   **Answer LLM and judge model:** which free hosted models? Do their daily
-    limits cover one run?
+*   **Answer LLM and judge model:** decided by the author on 2026-11-12.
+    *   **Answer:** `gemini-3.8-flash`, through Google's OpenAI-compatible
+        endpoint. Its free tier may use prompts to improve Google's
+        products, and the privacy notice names this.
+    *   **Judge:** `openai/gpt-oss-120b` on Groq, a different model family as
+        G2 requires.
+    *   **Still open:** whether Groq's daily token limit covers one judge
+        run. If it does not, the run is split across days.
 
 --------------------------------------------------------------------------------
 
@@ -1476,6 +1482,11 @@ to.
         current `.venv` has `torch 2.15.0+cpu`. If the index has no wheel for
         the pinned torch version, use the newest `cu12x` index that does,
         and record it here.
+        *   **Recorded 2026-11-12 (Phase 0):** no `cu12x` index has a
+            torch 2.15.0 wheel for cp312 / win_amd64 (`cu128` stops at
+            2.11.0; `cu126` at 2.14.1; 2.15.0 exists only for `cu132` and
+            CPU). `pyproject.toml` pins `torch==2.14.1` from an index named
+            `pytorch-cu126` (`https://download.pytorch.org/whl/cu126`).
     *   **Extras:**
         *   `eval`: `bm25s`, `scipy`;
         *   `dev`: `pytest`, `pytest-cov`, `ruff`.

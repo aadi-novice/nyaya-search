@@ -1,0 +1,22 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: nyaya
+      POSTGRES_PASSWORD: nyaya
+      POSTGRES_DB: nyaya
+    command: ["postgres", "-c", "maintenance_work_mem=1GB"]
+    ports:
+      - "127.0.0.1:5432:5432"
+    mem_limit: 4g
+    volumes:
+      - nyaya_pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nyaya -d nyaya"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  nyaya_pgdata:

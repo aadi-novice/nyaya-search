@@ -1,0 +1,1067 @@
+{
+  "$defs": {
+    "AnswerSentence": {
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "sentence": {
+          "title": "Sentence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sentence",
+        "citations"
+      ],
+      "title": "AnswerSentence",
+      "type": "object"
+    },
+    "AskRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "filters": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Filters"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "question": {
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "AskRequest",
+      "type": "object"
+    },
+    "AskResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "answer": {
+          "items": {
+            "$ref": "#/$defs/AnswerSentence"
+          },
+          "title": "Answer",
+          "type": "array"
+        },
+        "filters_applied": {
+          "additionalProperties": true,
+          "title": "Filters Applied",
+          "type": "object"
+        },
+        "gaps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Gaps",
+          "type": "array"
+        },
+        "nearest_passages": {
+          "items": {
+            "$ref": "#/$defs/PassageRef"
+          },
+          "title": "Nearest Passages",
+          "type": "array"
+        },
+        "notices": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notices",
+          "type": "array"
+        },
+        "passages": {
+          "items": {
+            "$ref": "#/$defs/PassageRef"
+          },
+          "title": "Passages",
+          "type": "array"
+        },
+        "passages_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Passages Note"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/$defs/Route"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        },
+        "timings_ms": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Timings Ms",
+          "type": "object"
+        },
+        "unverified": {
+          "items": {
+            "$ref": "#/$defs/UnverifiedSentence"
+          },
+          "title": "Unverified",
+          "type": "array"
+        },
+        "versions": {
+          "$ref": "#/$defs/Versions"
+        }
+      },
+      "required": [
+        "request_id",
+        "status",
+        "notices",
+        "route",
+        "filters_applied",
+        "versions",
+        "timings_ms"
+      ],
+      "title": "AskResponse",
+      "type": "object"
+    },
+    "ChunkRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "char_end": {
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "title": "Char Start",
+          "type": "integer"
+        },
+        "chunk_id": {
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "chunker_version": {
+          "title": "Chunker Version",
+          "type": "string"
+        },
+        "clean_text_version": {
+          "title": "Clean Text Version",
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "enum": [
+              "recursive_split",
+              "unnumbered",
+              "zone_missing"
+            ],
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "header": {
+          "title": "Header",
+          "type": "string"
+        },
+        "judgment_id": {
+          "title": "Judgment Id",
+          "type": "string"
+        },
+        "opinion_author": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Opinion Author"
+        },
+        "opinion_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpinionType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pages": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "para_labels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Para Labels",
+          "type": "array"
+        },
+        "para_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Para Refs",
+          "type": "array"
+        },
+        "section_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Label"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "zone": {
+          "$ref": "#/$defs/Zone"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "judgment_id",
+        "zone",
+        "para_labels",
+        "para_refs",
+        "text",
+        "header",
+        "char_start",
+        "char_end",
+        "pages",
+        "flags",
+        "clean_text_version",
+        "chunker_version"
+      ],
+      "title": "ChunkRecord",
+      "type": "object"
+    },
+    "Citation": {
+      "additionalProperties": false,
+      "description": "One verified citation on a sentence: every PassageRef field, plus these.",
+      "properties": {
+        "case_name": {
+          "title": "Case Name",
+          "type": "string"
+        },
+        "chunk_id": {
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "judgment_id": {
+          "title": "Judgment Id",
+          "type": "string"
+        },
+        "neutral_citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Neutral Citation"
+        },
+        "opinion_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpinionType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pages": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "paras": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paras"
+        },
+        "passage_label": {
+          "title": "Passage Label",
+          "type": "string"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        },
+        "scr_citation": {
+          "title": "Scr Citation",
+          "type": "string"
+        },
+        "zone": {
+          "$ref": "#/$defs/Zone"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "judgment_id",
+        "case_name",
+        "scr_citation",
+        "pages",
+        "zone",
+        "passage_label",
+        "quote"
+      ],
+      "title": "Citation",
+      "type": "object"
+    },
+    "Era": {
+      "enum": [
+        "c",
+        "d",
+        "out_of_scope"
+      ],
+      "title": "Era",
+      "type": "string"
+    },
+    "Filters": {
+      "additionalProperties": false,
+      "properties": {
+        "act": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Act"
+        },
+        "judge": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Judge"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "year_from": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Year From"
+        },
+        "year_to": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Year To"
+        }
+      },
+      "title": "Filters",
+      "type": "object"
+    },
+    "HeldPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "char_end": {
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "title": "Char Start",
+          "type": "integer"
+        },
+        "para_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Para Refs",
+          "type": "array"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "char_start",
+        "char_end",
+        "para_refs"
+      ],
+      "title": "HeldPoint",
+      "type": "object"
+    },
+    "JudgmentRecord": {
+      "additionalProperties": false,
+      "description": "Returned by get_judgment, served by GET /judgment/{path}.\n\nRows without a PDF (has_pdf = false) have null era, pages, clean_text and\nposition_map.",
+      "properties": {
+        "author_judge": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Author Judge"
+        },
+        "clean_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clean Text"
+        },
+        "cnr": {
+          "title": "Cnr",
+          "type": "string"
+        },
+        "decision_date": {
+          "format": "date",
+          "title": "Decision Date",
+          "type": "string"
+        },
+        "decision_year": {
+          "title": "Decision Year",
+          "type": "integer"
+        },
+        "disposal": {
+          "title": "Disposal",
+          "type": "string"
+        },
+        "era": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Era"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_pdf": {
+          "title": "Has Pdf",
+          "type": "boolean"
+        },
+        "judges": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Judges",
+          "type": "array"
+        },
+        "neutral_citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Neutral Citation"
+        },
+        "outcome": {
+          "title": "Outcome",
+          "type": "string"
+        },
+        "pages": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pages"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "petitioner": {
+          "title": "Petitioner",
+          "type": "string"
+        },
+        "position_map": {
+          "anyOf": [
+            {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position Map"
+        },
+        "respondent": {
+          "title": "Respondent",
+          "type": "string"
+        },
+        "scr_citation": {
+          "title": "Scr Citation",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "title",
+        "petitioner",
+        "respondent",
+        "judges",
+        "scr_citation",
+        "cnr",
+        "disposal",
+        "outcome",
+        "decision_date",
+        "decision_year",
+        "era",
+        "has_pdf",
+        "pages"
+      ],
+      "title": "JudgmentRecord",
+      "type": "object"
+    },
+    "Opinion": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Author"
+        },
+        "char_end": {
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "title": "Char Start",
+          "type": "integer"
+        },
+        "type": {
+          "$ref": "#/$defs/OpinionType"
+        }
+      },
+      "required": [
+        "type",
+        "char_start",
+        "char_end"
+      ],
+      "title": "Opinion",
+      "type": "object"
+    },
+    "OpinionType": {
+      "enum": [
+        "majority",
+        "concurring",
+        "dissenting",
+        "unknown"
+      ],
+      "title": "OpinionType",
+      "type": "string"
+    },
+    "ParsedDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "clean_text": {
+          "title": "Clean Text",
+          "type": "string"
+        },
+        "clean_text_version": {
+          "title": "Clean Text Version",
+          "type": "string"
+        },
+        "era": {
+          "$ref": "#/$defs/Era"
+        },
+        "pages": {
+          "title": "Pages",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "position_map": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Position Map",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "era",
+        "clean_text",
+        "position_map",
+        "pages",
+        "clean_text_version"
+      ],
+      "title": "ParsedDoc",
+      "type": "object"
+    },
+    "PassageRef": {
+      "additionalProperties": false,
+      "description": "Shown with refusals and in `passages` responses.",
+      "properties": {
+        "case_name": {
+          "title": "Case Name",
+          "type": "string"
+        },
+        "chunk_id": {
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "judgment_id": {
+          "title": "Judgment Id",
+          "type": "string"
+        },
+        "neutral_citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Neutral Citation"
+        },
+        "opinion_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpinionType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pages": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "paras": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paras"
+        },
+        "scr_citation": {
+          "title": "Scr Citation",
+          "type": "string"
+        },
+        "zone": {
+          "$ref": "#/$defs/Zone"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "judgment_id",
+        "case_name",
+        "scr_citation",
+        "pages",
+        "zone"
+      ],
+      "title": "PassageRef",
+      "type": "object"
+    },
+    "Route": {
+      "enum": [
+        "citation_lookup",
+        "hybrid"
+      ],
+      "title": "Route",
+      "type": "string"
+    },
+    "SearchHit": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk_id": {
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "fused_rank": {
+          "title": "Fused Rank",
+          "type": "number"
+        },
+        "keyword_rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keyword Rank"
+        },
+        "rerank_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Score"
+        },
+        "vector_rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vector Rank"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "fused_rank"
+      ],
+      "title": "SearchHit",
+      "type": "object"
+    },
+    "Status": {
+      "enum": [
+        "answered",
+        "passages",
+        "refused",
+        "no_match_with_filters",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "UnverifiedReason": {
+      "enum": [
+        "unknown_label",
+        "quote_not_found",
+        "quote_length",
+        "uncited_case_name",
+        "no_citation"
+      ],
+      "title": "UnverifiedReason",
+      "type": "string"
+    },
+    "UnverifiedSentence": {
+      "additionalProperties": false,
+      "description": "Never carries citation details: only the labels the LLM gave.",
+      "properties": {
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Labels",
+          "type": "array"
+        },
+        "reason": {
+          "$ref": "#/$defs/UnverifiedReason"
+        },
+        "sentence": {
+          "title": "Sentence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sentence",
+        "labels",
+        "reason"
+      ],
+      "title": "UnverifiedSentence",
+      "type": "object"
+    },
+    "Versions": {
+      "additionalProperties": false,
+      "properties": {
+        "config_version": {
+          "title": "Config Version",
+          "type": "string"
+        },
+        "embed_model": {
+          "title": "Embed Model",
+          "type": "string"
+        },
+        "index_version": {
+          "title": "Index Version",
+          "type": "string"
+        },
+        "llm_model": {
+          "title": "Llm Model",
+          "type": "string"
+        },
+        "prompt_version": {
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "reranker_fallback_used": {
+          "title": "Reranker Fallback Used",
+          "type": "boolean"
+        },
+        "reranker_model": {
+          "title": "Reranker Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "index_version",
+        "config_version",
+        "prompt_version",
+        "llm_model",
+        "reranker_model",
+        "reranker_fallback_used",
+        "embed_model"
+      ],
+      "title": "Versions",
+      "type": "object"
+    },
+    "Zone": {
+      "description": "All five may appear in Zones.missing; only ISSUE, EDITORIAL and JUDGMENT on chunks.",
+      "enum": [
+        "header",
+        "issue",
+        "editorial",
+        "references",
+        "judgment"
+      ],
+      "title": "Zone",
+      "type": "string"
+    },
+    "Zones": {
+      "additionalProperties": false,
+      "description": "All offsets point into ParsedDoc.clean_text.",
+      "properties": {
+        "acts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Acts",
+          "type": "array"
+        },
+        "editorial": {
+          "items": {
+            "$ref": "#/$defs/HeldPoint"
+          },
+          "title": "Editorial",
+          "type": "array"
+        },
+        "header_span": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Header Span",
+          "type": "array"
+        },
+        "issue_span": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issue Span"
+        },
+        "judgment_span": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Judgment Span",
+          "type": "array"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "missing": {
+          "items": {
+            "$ref": "#/$defs/Zone"
+          },
+          "title": "Missing",
+          "type": "array"
+        }
+      },
+      "required": [
+        "header_span",
+        "editorial",
+        "acts",
+        "keywords",
+        "judgment_span",
+        "missing"
+      ],
+      "title": "Zones",
+      "type": "object"
+    }
+  },
+  "title": "Nyaya Search contracts"
+}

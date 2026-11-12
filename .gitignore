@@ -11,3 +11,7 @@ obsidian-vault/
 design_draft.md
 .env
 build/
+eval/runs/
+*.parquet
+!tests/fixtures/**/*.parquet
+.coverage

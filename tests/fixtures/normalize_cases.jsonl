@@ -1,0 +1,64 @@
+{"id": "n001", "fn": "normalize_text", "category": "quotes", "input": "“Held”", "expected": "\"held\""}
+{"id": "n002", "fn": "normalize_text", "category": "quotes", "input": "the ‘right to life’", "expected": "the 'right to life'"}
+{"id": "n003", "fn": "normalize_text", "category": "quotes", "input": "petitioner’s claim", "expected": "petitioner's claim"}
+{"id": "n004", "fn": "normalize_text", "category": "quotes", "input": "„Low“ German quotes", "expected": "\"low\" german quotes"}
+{"id": "n005", "fn": "normalize_text", "category": "quotes", "input": "‚Single low‘ quote", "expected": "'single low' quote"}
+{"id": "n006", "fn": "normalize_text", "category": "quotes", "input": "‛Reversed‟ quotes", "expected": "'reversed\" quotes"}
+{"id": "n007", "fn": "normalize_text", "category": "quotes", "input": "mixed “straight\" and \"curly”", "expected": "mixed \"straight\" and \"curly\""}
+{"id": "n008", "fn": "normalize_text", "category": "quotes", "input": "it’s the Court’s view", "expected": "it's the court's view"}
+{"id": "n009", "fn": "normalize_text", "category": "quotes", "input": "already 'straight'", "expected": "already 'straight'"}
+{"id": "n010", "fn": "normalize_text", "category": "quotes", "input": "‘’“”", "expected": "''\"\""}
+{"id": "n011", "fn": "normalize_text", "category": "dashes", "input": "Motor Vehicles Act, 1988 – s.166", "expected": "motor vehicles act, 1988 - s.166"}
+{"id": "n012", "fn": "normalize_text", "category": "dashes", "input": "Penal Code, 1860 — s.302", "expected": "penal code, 1860 - s.302"}
+{"id": "n013", "fn": "normalize_text", "category": "dashes", "input": "paras 10–12", "expected": "paras 10-12"}
+{"id": "n014", "fn": "normalize_text", "category": "dashes", "input": "pages 5—7", "expected": "pages 5-7"}
+{"id": "n015", "fn": "normalize_text", "category": "dashes", "input": "plain - hyphen", "expected": "plain - hyphen"}
+{"id": "n016", "fn": "normalize_text", "category": "dashes", "input": "Constitution of India – Art. 14", "expected": "constitution of india - art. 14"}
+{"id": "n017", "fn": "normalize_text", "category": "dashes", "input": "–—", "expected": "--"}
+{"id": "n018", "fn": "normalize_text", "category": "dashes", "input": "well–settled law", "expected": "well-settled law"}
+{"id": "n019", "fn": "normalize_text", "category": "spacing", "input": "a  b", "expected": "a b"}
+{"id": "n020", "fn": "normalize_text", "category": "spacing", "input": "a\tb", "expected": "a b"}
+{"id": "n021", "fn": "normalize_text", "category": "spacing", "input": "a\nb", "expected": "a b"}
+{"id": "n022", "fn": "normalize_text", "category": "spacing", "input": "a\r\nb", "expected": "a b"}
+{"id": "n023", "fn": "normalize_text", "category": "spacing", "input": "  leading and trailing  ", "expected": "leading and trailing"}
+{"id": "n024", "fn": "normalize_text", "category": "spacing", "input": "line one\n\n\nline two", "expected": "line one line two"}
+{"id": "n025", "fn": "normalize_text", "category": "spacing", "input": "tabs\t\t and \n spaces", "expected": "tabs and spaces"}
+{"id": "n026", "fn": "normalize_text", "category": "spacing", "input": "", "expected": ""}
+{"id": "n027", "fn": "normalize_text", "category": "spacing", "input": "   ", "expected": ""}
+{"id": "n028", "fn": "normalize_text", "category": "spacing", "input": "a b", "expected": "a b"}
+{"id": "n029", "fn": "normalize_text", "category": "spacing", "input": "a b", "expected": "a b"}
+{"id": "n030", "fn": "normalize_text", "category": "spacing", "input": "a\u000bb\fc", "expected": "a b c"}
+{"id": "n031", "fn": "normalize_text", "category": "nfkc", "input": "a b", "expected": "a b"}
+{"id": "n032", "fn": "normalize_text", "category": "nfkc", "input": "ﬁnal order", "expected": "final order"}
+{"id": "n033", "fn": "normalize_text", "category": "nfkc", "input": "ﬂow of funds", "expected": "flow of funds"}
+{"id": "n034", "fn": "normalize_text", "category": "nfkc", "input": "Ａｒｔ． 21", "expected": "art. 21"}
+{"id": "n035", "fn": "normalize_text", "category": "nfkc", "input": "Section 2⁵", "expected": "section 25"}
+{"id": "n036", "fn": "normalize_text", "category": "nfkc", "input": "① first", "expected": "1 first"}
+{"id": "n037", "fn": "normalize_text", "category": "nfkc", "input": "Rs. 1,000", "expected": "rs. 1,000"}
+{"id": "n038", "fn": "normalize_text", "category": "nfkc", "input": "café", "expected": "café"}
+{"id": "n039", "fn": "normalize_text", "category": "nfkc", "input": "… and so on", "expected": "... and so on"}
+{"id": "n040", "fn": "normalize_text", "category": "nfkc", "input": "Ångström", "expected": "ångström"}
+{"id": "n041", "fn": "normalize_text", "category": "nfkc", "input": "½ share", "expected": "1⁄2 share"}
+{"id": "n042", "fn": "normalize_text", "category": "nfkc", "input": "Ⅰ Schedule", "expected": "i schedule"}
+{"id": "n043", "fn": "normalize_text", "category": "case", "input": "UNION OF INDIA", "expected": "union of india"}
+{"id": "n044", "fn": "normalize_text", "category": "case", "input": "State Of Punjab v. Mohinder Singh", "expected": "state of punjab v. mohinder singh"}
+{"id": "n045", "fn": "normalize_text", "category": "combined", "input": "“The  right to life”\n– Art. 21", "expected": "\"the right to life\" - art. 21"}
+{"id": "n046", "fn": "normalize_text", "category": "combined", "input": "  It’s  WELL–SETTLED\tthat ﬁndings  ", "expected": "it's well-settled that findings"}
+{"id": "n047", "fn": "normalize_text", "category": "combined", "input": "Arbitration and Conciliation Act, 1996: s.34", "expected": "arbitration and conciliation act, 1996: s.34"}
+{"id": "n048", "fn": "normalize_judge", "category": "judge", "input": "D.Y. CHANDRACHUD, J.", "expected": "D Y CHANDRACHUD"}
+{"id": "n049", "fn": "normalize_judge", "category": "judge", "input": "SURYA KANT", "expected": "SURYA KANT"}
+{"id": "n050", "fn": "normalize_judge", "category": "judge", "input": "Surya Kant, J.", "expected": "SURYA KANT"}
+{"id": "n051", "fn": "normalize_judge", "category": "judge", "input": "ABHAY S. OKA, J.", "expected": "ABHAY S OKA"}
+{"id": "n052", "fn": "normalize_judge", "category": "judge", "input": "D.Y. CHANDRACHUD, CJI", "expected": "D Y CHANDRACHUD"}
+{"id": "n053", "fn": "normalize_judge", "category": "judge", "input": "S.H. KAPADIA, C.J.", "expected": "S H KAPADIA"}
+{"id": "n054", "fn": "normalize_judge", "category": "judge", "input": "DR. D.Y. CHANDRACHUD, J.", "expected": "D Y CHANDRACHUD"}
+{"id": "n055", "fn": "normalize_judge", "category": "judge", "input": "Dr. Dhananjaya Y. Chandrachud", "expected": "DHANANJAYA Y CHANDRACHUD"}
+{"id": "n056", "fn": "normalize_judge", "category": "judge", "input": "J. CHELAMESWAR, J.", "expected": "J CHELAMESWAR"}
+{"id": "n057", "fn": "normalize_judge", "category": "judge", "input": "J.B. PARDIWALA", "expected": "J B PARDIWALA"}
+{"id": "n058", "fn": "normalize_judge", "category": "judge", "input": "MADAN B. LOKUR AND DEEPAK GUPTA, JJ.", "expected": "MADAN B LOKUR AND DEEPAK GUPTA"}
+{"id": "n059", "fn": "normalize_judge", "category": "judge", "input": "  R.F.  Nariman ,  J  ", "expected": "R F NARIMAN"}
+{"id": "n060", "fn": "normalize_judge", "category": "judge", "input": "SURINDER SINGH NIJJAR, J.:", "expected": "SURINDER SINGH NIJJAR"}
+{"id": "n061", "fn": "normalize_judge", "category": "judge", "input": "PANKAJ MITHAL", "expected": "PANKAJ MITHAL"}
+{"id": "n062", "fn": "normalize_judge", "category": "judge", "input": "S. RAVINDRA BHAT", "expected": "S RAVINDRA BHAT"}
+{"id": "n063", "fn": "normalize_judge", "category": "judge", "input": "M. M. SUNDRESH, J.", "expected": "M M SUNDRESH"}
+{"id": "n064", "fn": "normalize_judge", "category": "judge", "input": "", "expected": ""}
