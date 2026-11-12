@@ -22,6 +22,8 @@ Usage:
 
 `--force-era c` parses judgments classified out of scope as Era C instead of
 skipping them (the "before" baseline: what the Era C rules do on old PDFs).
+The script also runs against the code before Era B (PYTHONPATH pointing at
+an export of that commit's src/), for the before/after comparison.
 `--data-root` points at the folder holding data/tar and metadata/parquet;
 the manifest is built under build/ when it is missing.
 """
@@ -40,7 +42,15 @@ from pathlib import Path
 import pandas as pd
 
 from nyaya.build import opinion_judges
-from nyaya.chunk.chunker import count_words, find_paragraphs, paragraph_rules
+from nyaya.chunk.chunker import count_words, find_paragraphs
+
+try:
+    from nyaya.chunk.chunker import paragraph_rules
+except ImportError:  # the code before Era B (for "before" runs from an older checkout)
+
+    def paragraph_rules(parsed, settings):
+        return {}
+
 from nyaya.chunk.metrics import doc_metrics, summarize
 from nyaya.config import REPO_ROOT, load_settings
 from nyaya.contracts import Era, Zone
