@@ -1,0 +1,91 @@
+# Act name aliases: canonical name = [variants].
+#
+# Every name (canonical and variant) is compared after canonical_act()'s
+# preparation in nyaya.zone.zoner: normalize_text() (NFKC, straight quotes,
+# hyphens, collapsed spaces, lower case), a leading "the " removed, and the
+# year written as ", YYYY". So "The Indian Penal Code; 1860" and
+# "indian penal code, 1860" are the same variant. Names not listed keep their
+# prepared form; the build writes the most frequent unmapped names to
+# build/act_names_unmapped.csv so this file can be extended.
+#
+# A canonical name maps to itself without being listed as a variant.
+
+[aliases]
+"penal code, 1860" = [
+    "ipc",
+    "i.p.c.",
+    "indian penal code",
+    "indian penal code, 1860",
+    "penal code",
+    "the penal code, 1860",
+]
+"code of criminal procedure, 1973" = [
+    "crpc",
+    "cr.p.c.",
+    "cr. p.c.",
+    "criminal procedure code, 1973",
+    "criminal procedure code",
+    "code of criminal procedure",
+    "code of criminal procedure 1973",
+]
+"code of criminal procedure, 1898" = [
+    "criminal procedure code, 1898",
+]
+"code of civil procedure, 1908" = [
+    "cpc",
+    "c.p.c.",
+    "civil procedure code, 1908",
+    "civil procedure code",
+    "code of civil procedure",
+]
+"evidence act, 1872" = [
+    "indian evidence act, 1872",
+    "indian evidence act",
+    "evidence act",
+]
+"constitution of india" = [
+    "constitution of india, 1950",
+    "constitution",
+    "the constitution of india",
+    "indian constitution",
+]
+"narcotic drugs and psychotropic substances act, 1985" = [
+    "ndps act",
+    "ndps act, 1985",
+    "n.d.p.s. act, 1985",
+    "narcotic drugs & psychotropic substances act, 1985",
+    "narcotic drugs and psychotropic substance act, 1985",
+]
+"arbitration and conciliation act, 1996" = [
+    "arbitration & conciliation act, 1996",
+    "arbitration act, 1996",
+    "arbitration and conciliation act",
+]
+"income tax act, 1961" = [
+    "income-tax act, 1961",
+    "indian income tax act, 1961",
+    "income tax act",
+    "it act, 1961",
+    "i.t. act, 1961",
+]
+"income tax act, 1922" = [
+    "income-tax act, 1922",
+    "indian income tax act, 1922",
+    "indian income-tax act, 1922",
+]
+"bharatiya nyaya sanhita, 2023" = [
+    "bns",
+    "bns, 2023",
+    "the bharatiya nyaya sanhita, 2023",
+    "bharatiya nyaya sanhita",
+]
+"bharatiya nagarik suraksha sanhita, 2023" = [
+    "bnss",
+    "bnss, 2023",
+    "bharatiya nagarik suraksha sanhita",
+]
+"bharatiya sakshya adhiniyam, 2023" = [
+    "bsa",
+    "bsa, 2023",
+    "bharatiya sakshya adhiniyam",
+]
