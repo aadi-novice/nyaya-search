@@ -31,10 +31,11 @@ from nyaya.eval.devset_from_held import (
     HeldCandidate,
     OpenAICompatLLM,
     draft_devset,
+    order_candidates,
     write_handcheck_csv,
 )
 
-PARA_LINK_RE = re.compile(r"\[\s*Paras?\s+([0-9][0-9.,&\s\-–andC]*?)\s*[\])]")
+PARA_LINK_RE = re.compile(r"\[\s*Paras?\s+([0-9][0-9.,&\s\-\u2013andC]*?)\s*[\])]")
 FURNITURE_RES = [
     re.compile(r"^\s*\[\d{4}\]\s*\d+\s*S\.C\.R\.\s*(\d+)?\s*$"),
     re.compile(r"^\s*\d{1,4}\s*$"),
@@ -50,7 +51,7 @@ def parse_para_refs(inner: str) -> list[str]:
         part = part.strip()
         if not part:
             continue
-        m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)", part)
+        m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*[-\u2013]\s*(\d+(?:\.\d+)?)", part)
         if m:
             a, b = m.groups()
             if "." not in a and "." not in b and int(a) <= int(b) and int(b) - int(a) < 30:
@@ -98,6 +99,17 @@ def extract_held(pdf_bytes: bytes, title: str) -> tuple[list[tuple[str, list[str
         flat = " ".join(re.sub(r"-\n(?=[a-z])", "", block).split())
         points.append((flat, list(dict.fromkeys(refs))))
     return points, judgment
+
+
+class PrecomputedLLM:
+    """Answers with questions drafted elsewhere, keyed by Held text (same rule check)."""
+
+    def __init__(self, by_held: dict[str, str]):
+        self.by_held = by_held
+
+    def complete_json(self, system: str, user: str, timeout: float) -> dict:
+        held = user.split("Held point:\n", 1)[1].split("\n\nParty names", 1)[0]
+        return {"question": self.by_held[held]}
 
 
 def para_present(judgment: str, label: str) -> bool:
@@ -158,30 +170,50 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--per-year", type=int, default=40, help="judgments sampled per year")
     ap.add_argument("--size", type=int, default=40)
     ap.add_argument("--dry-run", action="store_true", help="extract only; no LLM calls")
+    ap.add_argument(
+        "--questions-file",
+        type=Path,
+        default=None,
+        help="JSON {index in the seeded order: question} drafted elsewhere; no LLM calls",
+    )
     ap.add_argument("--out", type=Path, default=DATASETS_DIR / "dev_draft_v0.jsonl")
     args = ap.parse_args(argv)
 
     settings = load_settings(env_file=None)
     ds = settings.devset
     secrets = Secrets(_env_file=args.env_file)  # type: ignore[call-arg]
-    if not (secrets.llm_base_url and secrets.llm_api_key and secrets.llm_model):
+    needs_llm = args.questions_file is None and not args.dry_run
+    if needs_llm and not (secrets.llm_base_url and secrets.llm_api_key and secrets.llm_model):
         print("LLM_BASE_URL, LLM_API_KEY and LLM_MODEL are required", file=sys.stderr)
         return 2
     years = [int(y) for y in args.years.split(",")]
     cands = collect(args.data_root, years, args.per_year, ds.seed)
-    print(
-        f"held points with resolved links: {len(cands)} from {len({c.path for c in cands})} judgments"
-    )
+    n_judgments = len({c.path for c in cands})
+    print(f"held points with resolved links: {len(cands)} from {n_judgments} judgments")
 
     if args.dry_run:
         for c in cands[:5]:
             print(c.path, c.para_labels, c.held_text[:300])
         return 0
-    llm = OpenAICompatLLM(
-        secrets.llm_base_url, secrets.llm_api_key.get_secret_value(), secrets.llm_model, 2048
-    )
+    retries = 1
+    if args.questions_file is not None:
+        ordered = order_candidates(cands, ds.seed)
+        given = json.loads(args.questions_file.read_text(encoding="utf-8"))
+        by_held = {ordered[int(i)].held_text: q for i, q in given.items()}
+        cands = [c for c in cands if c.held_text in by_held]
+        llm = PrecomputedLLM(by_held)
+        retries = 0  # a rejected question is rejected, not redrafted
+    else:
+        llm = OpenAICompatLLM(
+            secrets.llm_base_url, secrets.llm_api_key.get_secret_value(), secrets.llm_model, 2048
+        )
     result = draft_devset(
-        cands, llm, size=args.size, max_shared_words=ds.max_shared_words, seed=ds.seed, retries=1
+        cands,
+        llm,
+        size=args.size,
+        max_shared_words=ds.max_shared_words,
+        seed=ds.seed,
+        retries=retries,
     )
     write_jsonl(args.out, result.items)
     hc = write_handcheck_csv(
@@ -192,7 +224,9 @@ def main(argv: list[str] | None = None) -> int:
         "kept": len(result.items),
         "rejected": len(result.rejected),
         "rejected_by_reason": _count(r["reason"].split(":")[0] for r in result.rejected),
-        "llm_calls": result.llm_calls,
+        "llm_calls": 0 if args.questions_file else result.llm_calls,
+        "drafts_checked": result.llm_calls,
+        "drafted_by": "questions file" if args.questions_file else secrets.llm_model,
         "years": _count(str(result.candidates[i.id].year) for i in result.items),
     }
     rej = args.out.with_name(args.out.stem + "_rejected.jsonl")

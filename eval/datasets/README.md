@@ -128,5 +128,18 @@ the author labels 30 to 50 (sentence, passage) pairs in Phase 3, for
     2010–2026 Supreme Court holding, but this is not yet verified against the
     index.
 *   `dev_draft_v0.jsonl` is a first draft from 2024–2025 Held points,
-    extracted locally (not by the real parser). It **still needs the author's
-    50-item hand check**, and is replaced by `dev_v1.jsonl` after the build.
+    extracted locally (not by the real parser), so `source_held_chunk` is
+    null. It **still needs the author's 50-item hand check** (all 44 items
+    are in `dev_draft_v0_handcheck.csv`), and is replaced by `dev_v1.jsonl`
+    after the build.
+    *   **Provenance:** the configured free LLM (`LLM_MODEL`) returned HTTP 402
+        on 2026-11-12, so the 49 questions in `dev_draft_v0_questions.json`
+        were drafted by the coding assistant instead, one per Held point in
+        the seeded order, and passed through the same code check
+        (`--questions-file`). 49 drafts were checked (three of the first 52
+        Held points were skipped as not question-worthy): 44 kept, 5 rejected
+        for a shared 5-word run, listed in
+        `dev_draft_v0_rejected.jsonl`. Rejected questions were not redrafted.
+    *   Reproduce: `uv run python scripts/draft_devset_v0.py --data-root
+        <docs> --env-file <.env> --size 100 --questions-file
+        eval/datasets/dev_draft_v0_questions.json`.

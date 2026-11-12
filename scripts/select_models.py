@@ -181,8 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=REPO / "docs" / "model_selection.md")
     args = ap.parse_args(argv)
 
-    from nyaya.eval.wiring import rerank_fn
     from nyaya.models.encoders import Reranker
+
+    from nyaya.eval.wiring import rerank_fn
 
     settings = load_settings()
     engine = load_build(REPO / settings.paths.build, args.year)
