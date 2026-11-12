@@ -399,7 +399,12 @@ def _era_c_points(text: str, start: int, end: int) -> list[HeldPoint]:
     return points
 
 
-def _zone_era_c(text: str, settings: Settings, aliases: Mapping[str, str]) -> Zones:
+def _zone_era_c(
+    text: str,
+    settings: Settings,
+    aliases: Mapping[str, str],
+    unmatched: list[str] | None = None,
+) -> Zones:
     n = len(text)
     missing: list[Zone] = []
     first_held = _C_HELD.search(text)
@@ -430,7 +435,7 @@ def _zone_era_c(text: str, settings: Settings, aliases: Mapping[str, str]) -> Zo
         missing.append(Zone.JUDGMENT)
 
     catch_end = helds[0].start() if helds else ed_end
-    acts = extract_era_c_acts(text[ed_start:catch_end], settings, aliases)
+    acts = extract_era_c_acts(text[ed_start:catch_end], settings, aliases, unmatched)
 
     editorial: list[HeldPoint] = []
     for i, h in enumerate(helds):
@@ -518,11 +523,16 @@ def zone(
     parsed: ParsedDoc,
     settings: Settings | None = None,
     aliases: Mapping[str, str] | None = None,
+    unmatched: list[str] | None = None,
 ) -> Zones:
-    """Zones of one judgment. All offsets point into parsed.clean_text."""
+    """Zones of one judgment. All offsets point into parsed.clean_text.
+
+    Era C catchword groups that name no Act are appended to `unmatched` when
+    it is given (the build logs them as `act_unmatched`).
+    """
     settings = settings or default_settings()
     if aliases is None:
         aliases = load_act_aliases(settings)
     if parsed.era is Era.D:
         return _zone_era_d(parsed.clean_text, aliases)
-    return _zone_era_c(parsed.clean_text, settings, aliases)
+    return _zone_era_c(parsed.clean_text, settings, aliases, unmatched)

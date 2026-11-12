@@ -20,7 +20,8 @@ step 8 "Load", file 29).
 `active`, retires the previous active version, and deletes older retired
 versions, so production keeps the active version and one retired version.
 
-Build inputs (written by `nyaya-build parse-chunk` and `embed`):
+Build inputs (written by `nyaya-build parse-chunk` and `embed`; `years`
+limits the per-year files read):
 
     judgments/<year>.parquet    one row per judgment, judgments-table columns
     chunks/<year>.jsonl         one ChunkRecord per line
@@ -181,13 +182,20 @@ def judgment_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
     return rows
 
 
-def _year_files(directory: Path, suffix: str) -> list[Path]:
-    return sorted(directory.glob(f"*{suffix}")) if directory.is_dir() else []
+def _year_files(directory: Path, suffix: str, years: Iterable[int] | None = None) -> list[Path]:
+    """`<year><suffix>` files in `directory`, all or only those of `years`."""
+    if not directory.is_dir():
+        return []
+    files = sorted(directory.glob(f"*{suffix}"))
+    if years is None:
+        return files
+    wanted = {str(y) for y in years}
+    return [f for f in files if f.name[: -len(suffix)] in wanted]
 
 
-def read_chunks(build: Path) -> list[ChunkRecord]:
+def read_chunks(build: Path, years: Iterable[int] | None = None) -> list[ChunkRecord]:
     chunks: list[ChunkRecord] = []
-    for path in _year_files(build / "chunks", ".jsonl"):
+    for path in _year_files(build / "chunks", ".jsonl", years):
         with path.open(encoding="utf-8") as f:
             for n, line in enumerate(f, 1):
                 if line.strip():
@@ -198,10 +206,12 @@ def read_chunks(build: Path) -> list[ChunkRecord]:
     return chunks
 
 
-def read_vectors(build: Path, dim: int) -> tuple[list[str], np.ndarray]:
+def read_vectors(
+    build: Path, dim: int, years: Iterable[int] | None = None
+) -> tuple[list[str], np.ndarray]:
     ids: list[str] = []
     blocks: list[np.ndarray] = []
-    for npy in _year_files(build / "vectors", ".npy"):
+    for npy in _year_files(build / "vectors", ".npy", years):
         ids_file = npy.with_suffix(".ids.txt")
         if not ids_file.exists():
             raise ValueError(f"{npy}: missing {ids_file.name}")
@@ -243,10 +253,12 @@ class BuildData:
         return {j["path"] for j in self.judgments}
 
 
-def read_build(build_dir: Path | str, dim: int) -> BuildData:
-    """Read every build file; aliases are kept only for the judgments being loaded."""
+def read_build(build_dir: Path | str, dim: int, years: Iterable[int] | None = None) -> BuildData:
+    """Read the build files (every year, or only `years`); aliases are kept only for
+    the judgments being loaded."""
     build = Path(build_dir)
-    jfiles = _year_files(build / "judgments", ".parquet")
+    years = list(years) if years is not None else None
+    jfiles = _year_files(build / "judgments", ".parquet", years)
     if not jfiles:
         raise ValueError(f"{build / 'judgments'}: no judgment files")
     judgments = [r for f in jfiles for r in judgment_rows(pd.read_parquet(f))]
@@ -255,16 +267,16 @@ def read_build(build_dir: Path | str, dim: int) -> BuildData:
         if j["path"] in seen:
             raise ValueError(f"judgment {j['path']!r} appears twice in the build")
         seen.add(j["path"])
-    chunks = read_chunks(build)
+    chunks = read_chunks(build, years)
     orphans = sorted({c.judgment_id for c in chunks} - seen)
     if orphans:
         raise ValueError(f"chunks reference judgments not in the build: {orphans[:5]}")
-    ids, vectors = read_vectors(build, dim)
+    ids, vectors = read_vectors(build, dim, years)
     alias_file = build / "aliases.parquet"
     aliases = _read_parquets([alias_file], ALIAS_COLUMNS) if alias_file.exists() else []
     aliases = [a for a in aliases if a[2] in seen]
-    links = _read_parquets(_year_files(build / "links", ".parquet"), LINK_COLUMNS)
-    refs = _read_parquets(_year_files(build / "refs", ".parquet"), REF_COLUMNS)
+    links = _read_parquets(_year_files(build / "links", ".parquet", years), LINK_COLUMNS)
+    refs = _read_parquets(_year_files(build / "refs", ".parquet", years), REF_COLUMNS)
     return BuildData(judgments, chunks, ids, vectors, aliases, links, refs)
 
 
@@ -499,6 +511,7 @@ def load(
     reranker: RerankService,
     smoke_path: Path | str = Path("eval") / "datasets" / "phase1_smoke.jsonl",
     engine_factory: Callable[[str], SearchEngine] | None = None,
+    years: Iterable[int] | None = None,
 ) -> LoadReport:
     """Load `build_dir` as `version`; raise LoadCheckFailed (exit 5) if a check fails.
 
@@ -507,7 +520,7 @@ def load(
     `PostgresSearch(index_version=version, conn=conn)`.
     """
     build = Path(build_dir)
-    data = read_build(build, settings.embed.dim)
+    data = read_build(build, settings.embed.dim, years)
     pre = check_ids([c.chunk_id for c in data.chunks], data.vector_ids)
     if pre:
         raise ValueError("build is inconsistent, nothing loaded: " + "; ".join(pre))
