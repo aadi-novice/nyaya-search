@@ -303,8 +303,10 @@ target at most once with a written reason, then freeze it.
         number requested.
     *   If no judgment matches, the response is `no_match_with_filters` and
         names the filters.
-    *   The Act filter has known missing data for 2010–2023 (see Open
-        Questions).
+    *   Judgments from 2010–2023 match the Act filter through Acts taken
+        from their catchwords.
+    *   Normalised Act names make "IPC", "Indian Penal Code, 1860" and
+        "Penal Code, 1860" match the same filter value.
 
 ### CUJ 4: A question the corpus cannot answer
 
@@ -394,35 +396,52 @@ checked against `docs/data_check_report.md`.
     | `scr_citation` | `citation` | as text |
     | `neutral_citation` | `nc_display` | stored as given, for example `2025INSC20`; a canonical form `2025 INSC 20` goes in aliases |
     | `cnr` | `cnr` | as text |
-    | `disposal` | `disposal_nature` | raw text, plus `outcome`, read from a fixed lookup in config |
+    | `disposal` | `disposal_nature` | raw text, trimmed, plus `outcome`, read from `outcome_map` in config (values measured below) |
     | `decision_date` | `decision_date` | parsed from dd-mm-yyyy to DATE, plus `decision_year` |
+    | `folder_year` | (none) | taken from the Parquet file path `year=YYYY`; used only to find the row's tar |
 
-    `description`, `raw_html`, `court`, `case_id`, `scraped_at` and
-    `available_languages` are dropped. `raw_html` holds no field the system
+    `description`, `raw_html`, `court`, `case_id`, `scraped_at` (used only for
+    the duplicate rule) and `available_languages` are not stored. The
+    `year` column is dropped: it matches the folder in only 88.1% of rows,
+    and `decision_year` replaces it. `raw_html` holds no field the system
     needs that is not already in another column.
+*   **Measured `disposal_nature` values, 2010–2026 (13,007 rows):** "Appeal(s)
+    allowed" 5,243; "Dismissed" 3,588; "Disposed off" 2,355; "Case Partly
+    allowed" 718; empty 313; "Directions issued" 232; "Case Allowed" 145;
+    "Matter referred to larger bench" 123; "Reference answered" 80;
+    "Hearing Adjourned" 69; 15 rarer values with 1–44 rows each. These
+    define `outcome_map` in file 6.
 *   **Duplicates:** keep one row per `path`, preferring:
     1.  the copy whose PDF exists;
     2.  then the later `scraped_at`;
     3.  then the lexically lowest tar path.
 
-    All 300 duplicate pairs sampled had byte-identical PDFs. The file name
-    of a judgment's year means its decision year.
-*   **Tar offsets:** join on the file name `<path>_EN.pdf`, looking in the
-    kept row's tar first and then in any tar. Store `offset_data`, the
+    All 300 duplicate pairs sampled had byte-identical PDFs, so the choice
+    changes only which metadata row is kept. In every per-year build file
+    name (`<year>`), the year is the **decision year**.
+*   **Tar offsets:** join on the file name `<path>_EN.pdf`, looking first in
+    the tar of the kept row's `folder_year`, then in any tar. Store `offset_data`, the
     offset of the file's content. This reuses the logic of
     `scripts/data_check.py` (lines 65–100).
 *   **No PDF:** judgments with no PDF stay as metadata only, with
     `has_pdf = false`. The count is recomputed after duplicates are removed.
 
-**2. Calibrate the margin bands.**
+**2. Calibrate the margin bands (Era C only; Era D has no margin letters).**
 
-*   **Sample:** 50 PDFs per era in scope (C, D), chosen with seed 42.
+*   **Sample:** `calibrate.sample_size` (50) judgments with a PDF and a
+    decision year from 2010 to 2023, chosen with `calibrate.seed`. Each is
+    run through `classify` on its first 3 pages, and only PDFs classified as
+    Era C are used. If fewer than 40 remain, the step stops.
 *   **Method:** record the x-positions of single uppercase letters A to H
     that sit alone on a line, and find the left and right bands where they
-    cluster.
-*   **Output:** write the bands to `config/settings.toml`.
-*   **Failure:** if no cluster is found for Era C, the build stops. Era D has
-    no margin letters.
+    cluster. Also record the top and bottom furniture bands, where running
+    heads and page numbers sit.
+*   **Output:** written as JSON to `build/bands.json`. `load_settings()`
+    merges it over the `bands.*` defaults, and its file hash is part of
+    `versions.config`, so new bands mean a new config version.
+    `config/settings.toml` is never rewritten by code.
+*   **Failure:** if no left/right cluster is found, the step exits with
+    code 2.
 
 The parsing rules are expected to remove the margin furniture, but they are
 not yet tested. The G6 hand check, on a separate sample, is the acceptance
@@ -430,14 +449,16 @@ test.
 
 **3. Parse (PyMuPDF with coordinates).**
 
-*   **Era classification** runs here, on the text of the first 3 pages. The
-    marker rules start from `MARKERS` in `scripts/layout_study.py`:
+*   **Era classification** runs here, on the text of the first 3 pages
+    (PyMuPDF `get_text("text")`). The Era D markers come from `MARKERS` in
+    `scripts/layout_study.py`; the Era C markers are defined here, because
+    that script has no Era C entry:
 
-    | Result | Rule |
+    | Result | Rule (`era_markers.*` in config) |
     | --- | --- |
-    | **Era D (2024+)** | the labels "Issue for Consideration", "Headnotes", "Case Law Cited", "List of Acts", "List of Keywords" |
-    | **Era C (2010–2023)** | margin letters on lines of their own, plus "[Para N]" pinpoints in the Held points |
-    | **out_of_scope** | anything else, logged to `build/skipped.csv` |
+    | **Era D (2024+)** | at least 3 of: `Issue for Consideration`, `Headnotes`, `Case Law Cited`, `List of Acts`, `List of Keywords` |
+    | **Era C (2010–2023)** | not Era D, **and** at least 5 lines matching `^\s*[A-H]\s*$`, **and** `HELD\s*:` present, **and** the decision year is 2010–2023 |
+    | **out_of_scope** | anything else, logged to `build/skipped.csv` with reason `era_out_of_scope` |
 *   **Furniture removal.** Extract words with their bounding boxes, then
     remove three kinds of furniture **by position**, before words are joined
     into lines:
@@ -456,26 +477,90 @@ test.
         page in the file name.
     *   Every output carries `clean_text_version`.
 
-**4. Zone.** Each zone is found by markers specific to its era:
+**4. Zone.** Each zone is found by line-anchored patterns specific to its
+era. All patterns run on the clean text, case-insensitive, with `^` and `$`
+matching line ends:
 
-| Zone | Era D | Era C | Handling |
+| Zone | Era D start → end | Era C start → end | Handling |
 | --- | --- | --- | --- |
-| header | from the start to "Issue for Consideration" | from the start to the first catchword line | metadata only, not embedded |
-| issue | "Issue for Consideration" up to "Headnotes" | none | one chunk |
-| editorial | "Headnotes" up to "Case Law Cited" | catchwords, up to and including "the Court HELD:" with its numbered points (1.1, 1.2 …), up to the case list | one chunk per Held point, tagged `editorial`, keeping its "[Para N]" |
-| references | "Case Law Cited", "List of Acts", "List of Keywords" | "Case Law Reference" block | Acts and keywords become `refs` rows; nothing is chunked |
-| judgment | "Judgment / Order of the Supreme Court" to the end | the "CIVIL/CRIMINAL APPELLATE JURISDICTION" block, then the judgment, to the end | split into opinions, then chunked |
+| header | text start → `^Issue for Consideration\s*$` | text start → the bench line `\[[^\]]*(?:J\.|JJ\.|CJI\.?)\s*\]?\s*$` (inclusive) | metadata only, not embedded |
+| issue | `^Issue for Consideration\s*$` → `^Headnotes\b` | none | one chunk |
+| editorial | `^Headnotes\b` → `^Case Law Cited\s*$` | the line after the bench line → the first line matching `^(?:Case Law Reference|CIVIL|CRIMINAL|ORIGINAL|WRIT|APPELLATE)\b.*JURISDICTION|^Case Law Reference\s*$` | one chunk per Held point, tagged `editorial`, keeping its `para_refs` |
+| references | `^Case Law Cited\s*$` → `^Case Arising From\s*$` (holds "List of Acts" and "List of Keywords") | `^Case Law Reference\s*$` → the jurisdiction line; Acts come from the catchwords (rules below) | Acts and keywords become `refs` rows; nothing is chunked |
+| judgment | `^Judgment\s*/\s*Order of the Supreme Court\s*$` → text end | the jurisdiction line → text end | split into opinions, then chunked |
 
-If a zone cannot be found, it is recorded as missing. The judgment zone then
-falls back to the whole clean text, and the document is flagged.
+If a zone cannot be found, it is recorded in `Zones.missing`. The judgment
+zone then falls back to the whole clean text, and the document is flagged
+`zone_missing`.
+
+**Held points.**
+
+*   **Era C:** the editorial zone's text after `HELD\s*:` is split on point
+    numbers `(?:^|\s)(\d{1,2}(?:\.\d{1,2})?)\.?\s+(?=[A-Z])` (matching "1.",
+    "1.1", "2.3"). If no number follows "HELD:" (seen in the sample as
+    "HELD: Per Surinder Singh Nijjar, J."), the whole HELD block is one
+    point.
+*   **Era D:** each paragraph starting `Held\s*:` in the Headnotes zone is one
+    point.
+*   **Paragraph links, both eras:** lines are joined first, then each link
+    is found with
+    `\[\s*Paras?\s+([0-9][0-9.,&\s\-–andC]*?)\s*[\])]`. The closing `)` is
+    accepted, because OCR turns some `]` into `)`, as in "[Para 13)
+    [727-E]". Inside the captured text:
+    *   a stray single margin letter is removed (seen: "[Para C 10)");
+    *   separators are ",", "&" and "and";
+    *   a range "10-12" or "10–12" expands to 10, 11, 12 for whole numbers,
+        and is kept as its two ends for sub-paragraphs.
+
+    Formats seen in 15 sampled 2010–2023 judgments: "[Para 9]", "[Paras 7,
+    8]", "[Paras 17 and 18]", "[Para 16 and 17]", "[Para 11.1 & 12]",
+    "[Para 12.1]", "[Paras 19 and 20) [366-C-E]".
+
+**Era C Acts** (author decision E1, 2026-11-12). Verified on 15 sampled
+2010–2023 judgments:
+
+*   **Preparation:** the catchword text (the editorial zone before `HELD`)
+    has its lines joined with spaces, lone margin letters removed, and every
+    dash (`-`, `–`, `—`) normalised to " – ".
+*   **Groups:** a catchword group starts at the zone start, or after a full
+    stop followed by a capital letter, unless the full stop ends one of
+    `chunk.abbreviations` ("s.", "ss.", "No.", "r.", "Art.", …).
+*   **Every Act in a group is captured,** not only the first. An Act is any
+    match of
+    `(?:The\s+)?([A-Z][A-Za-z().&'’\- ]{2,120}?(?:Act|Code|Rules|Regulations|Ordinance|Order|Adhiniyam|Sanhita))\s*[,;]\s*(\d{4})`
+    (case-insensitive, to catch "BOMBAY POLICE ACT, 1951"). The ";" covers
+    the OCR form "Penal Code; 1860".
+*   **Acts without a year,** matched from the list `acts.no_year_allowlist`
+    in config: "Constitution of India" (also "Constitution" followed by
+    "Art."/"Arts.").
+*   **Not Acts:** subject headings without a year ("Service Law:",
+    "Contempt of Court:", "Child and Family Welfare:") are ignored.
+*   **Samples seen:** "Motor Vehicles Act, 1988 –", "Arbitration and
+    Conciliation Act, 1996: s.34", "Penal Code, 1860:", "The Uttar Pradesh
+    Krishi Utpadan Mandi Adhiniyam, 1964:" (wrapped across two lines),
+    "Maharashtra Civil Services (Discipline and Appeal) Rules, 1979",
+    "Trademarks Act, 1999 – s.89A – Finance Act, 2017 – s.184" (two Acts in
+    one group).
+*   **Normalising:** each Act name goes through `normalize_text()` (file 11),
+    then `config/act_aliases.toml`. Names not in the alias file keep their
+    normalised form. The 200 most frequent unmapped names go to
+    `build/act_names_unmapped.csv`.
 
 **Opinions.**
 
-*   A new opinion starts at a line holding a judge name from the
-    `judges` metadata, followed by ", J.", ", CJI" or ", J.:".
+*   **Judge names** are normalised by `normalize_judge()` (file 11): upper
+    case, the suffixes "J.", "JJ.", "CJI", "C.J." and "DR." removed,
+    full stops and spaces collapsed ("D.Y. CHANDRACHUD, J." → "D Y
+    CHANDRACHUD"). The metadata `judge` column holds one upper-case name
+    (for example "SURYA KANT"), which is the bench list's author where
+    present.
+*   A new opinion starts at a line matching
+    `^\s*([A-Z][A-Za-z.\s]{2,60}),\s*(?:J|CJI|C\.J)\.?\s*:?\s*$`, where the
+    captured name, after `normalize_judge()`, equals a name from the bench
+    line or the `judge` column.
 *   In Era D, the bench marker "*" names the author of the main opinion.
-*   **Opinion type** comes from phrase rules, matched only in the first 300
-    characters of each opinion. The phrase list is in config, in priority
+*   **Opinion type** comes from phrase rules, matched only in the first
+    `opinion.phrase_window_chars` (300) characters of each opinion. The phrase list is in config, in priority
     order:
     *   dissenting: "I regret I am unable to agree", "dissent";
     *   concurring: "I agree", "concurring".
@@ -488,8 +573,9 @@ falls back to the whole clean text, and the document is flagged.
 *   **Unit:** numbered paragraphs within one opinion. A paragraph starts at
     a line matching `^\s*(\d{1,3}(\.\d{1,2})?)\.?\s`. Paragraph labels are
     strings, such as "12" or "12.1".
-*   **Size limits** are in whitespace-separated words: target 400, minimum
-    80, maximum 700.
+*   **Size limits** are in whitespace-separated words, set by
+    `chunk.target_words` (400), `chunk.min_words` (80) and
+    `chunk.max_words` (700).
     *   **Merging:** consecutive paragraphs are merged up to the target.
     *   **Splitting:** a paragraph over the maximum is split at sentence
         boundaries, with one sentence of overlap, and flagged
@@ -506,8 +592,18 @@ falls back to the whole clean text, and the document is flagged.
     abbreviations: J., JJ., v., vs., Ors., Anr., No., Sr., Adv., i.e.,
     e.g., viz., s., ss., Art., para.
 *   **Context header:** each chunk gets a header built from metadata, never
-    from an LLM. For example: *"Jit Vinayak Arolkar v. State of Goa (2025) ·
-    Judgment · Abhay S. Oka, J. · paras 9–10 · Penal Code, 1860"*.
+    from an LLM, with this exact format (fields joined by " · ", empty
+    fields and their separator left out):
+
+    ```text
+    {title} ({decision_year}) · {zone_label} · {opinion_author}{opinion_suffix} · paras {para_first}–{para_last} · {acts}
+    zone_label     = "Judgment" | "Headnote (editorial)" | "Issue"
+    opinion_suffix = "" | " (dissenting)" | " (concurring)"
+    acts           = up to 3 canonical Act names from refs, joined by "; "
+    ```
+
+    For example: *"Jit Vinayak Arolkar v. State of Goa (2025) · Judgment ·
+    Abhay S. Oka, J. · paras 9–10 · penal code, 1860"*.
     *   The header is embedded and keyword-indexed with the chunk.
     *   The quote check never runs against the header.
 *   **Section labels:** sub-headings in capitals, such as "FACTUAL ASPECT",
@@ -517,15 +613,24 @@ falls back to the whole clean text, and the document is flagged.
 
 **6. Link.**
 
-*   **Aliases** map each citation form of a judgment to its `path`:
-    *   SCR (`[2025] 1 S.C.R. 230`, `2025 (1) SCR 230`);
-    *   neutral (`2025 INSC 31` and `2025INSC31`);
-    *   CNR.
+*   **Aliases** map each citation form of a judgment to its `path`. The
+    canonical forms (produced by `canonical_citation()`, file 24) are:
+    *   SCR: `scr:2025:1:230` for `[2025] 1 S.C.R. 230` or `2025 (1) SCR 230`;
+    *   SCR Supplement: `scr:2005:s6:72` for `[2006] SUPP. 6 S.C.R. 72`
+        style citations. Supplement paths (`S_…`) all date from before
+        2010 (none from 2010 on, measured), but the form keeps them
+        distinct from regular volumes when older eras are added;
+    *   neutral: `insc:2025:31` for `2025 INSC 31` and `2025INSC31` (the
+        metadata stores the unspaced form);
+    *   CNR: `cnr:escr010004242025` for the 16-character code, which
+        matches `[A-Z]{4}\d{12}` in all 13,007 rows checked.
 
     SCC and AIR citations are recognised as patterns in text, but are not in
     the alias table, because the metadata holds no SCC or AIR fields.
-*   **Held links:** each Held point's "[Para N]" maps to the judgment chunks
-    whose `para_labels` contain N, or start with "N.".
+    Aliases are built **only for paths loaded in the same index version**,
+    so a lookup never resolves to a judgment that is not loaded.
+*   **Held links:** each Held point's `para_refs` entry N maps to the
+    judgment chunks whose `para_labels` contain N, or start with "N.".
 
 **7. Embed.**
 
@@ -536,18 +641,28 @@ falls back to the whole clean text, and the document is flagged.
 *   **Queries** get this prefix: `Instruct: Given a legal research question,
     retrieve Supreme Court judgment passages that answer it\nQuery: `.
 *   **Throughput:** measured once by `scripts/select_models.py`.
-*   **Kaggle:** used if a run is too large for the PC, such as full-corpus
-    or High Court runs. The Kaggle job also writes reference vectors for the
-    parity check at API startup.
+*   **Kaggle (Future):** used if a run is too large for the PC, such as
+    full-corpus or High Court runs. The Kaggle job also writes reference
+    vectors to `build/vectors/reference/passages.json` and
+    `build/vectors/reference/vectors.npy`, for the parity check at API
+    startup.
 
 **8. Load.**
 
 *   Bulk-load under a new `index_version` in status `building`.
 *   Build the HNSW index (cosine) and the full-text GIN index.
-*   **Checks run after loading:**
+*   **Checks run after loading,** against the `building` version itself
+    (`PostgresSearch(index_version=<new>)`), without calling the LLM:
     *   the vector IDs equal the chunk IDs;
-    *   the G6 metrics pass;
-    *   the 10 Phase 1 questions all return a valid response.
+    *   the G6 automatic metrics pass (from `build/chunk_metrics.json`);
+    *   **smoke check:** for each question in
+        `eval/datasets/phase1_smoke.jsonl`, routing, retrieval and reranking
+        run. The check passes if the route matches `expected_route` for all
+        10, and the expected judgment is in the reranked top
+        `retrieval.final_k` for at least `load.smoke_min_hits` (8) of them.
+        This depends neither on the LLM nor on the refusal threshold.
+*   **Threshold seeding:** the version's `threshold_qwen` and
+    `threshold_cohere` are copied from `refusal.*` in config at load time.
 *   If the checks pass, the status becomes `ready`.
 *   `activate` moves a `ready` version to `active`, and the old active
     version to `retired`.
@@ -563,12 +678,13 @@ falls back to the whole clean text, and the document is flagged.
     comes from.
 *   **How it is built:**
     1.  A free LLM drafts one question per Held point, following
-        paraphrasing rules: no run of 5 or more words copied from the Held
-        point, and no party names.
-    2.  The author hand-checks 50 of the questions.
-    3.  About 300 are kept.
-*   **Unanswerable questions:** about 40 written by the author, about points
-    the slice does not address.
+        paraphrasing rules: no run of `devset.max_shared_words` (5) or more
+        words copied from the Held point, and no party names.
+    2.  The author hand-checks `devset.handcheck_size` (50) of the
+        questions.
+    3.  `devset.size` (300) are kept, chosen with `devset.seed`.
+*   **Unanswerable questions:** `devset.unanswerable_size` (40) written by
+    the author, about points the slice does not address.
 *   **Gold label:** (path, paragraph labels).
     *   During scoring, a retrieved Held chunk is replaced by the judgment
         chunks it links to.
@@ -587,10 +703,24 @@ No component changes a contract without updating this section first.
 
 ```text
 path              string
-era               enum     C | D
+era               enum     c | d
 clean_text        string
 position_map      [(char_offset:int, page:int)]   page = printed SCR page
+pages             int      number of PDF pages (stored as judgments.pages)
 clean_text_version string
+```
+
+Enum values on the wire and in the database are lower case (`c`,
+`judgment`, `citation_lookup`, `no_match_with_filters`); Python enum member
+names may be upper case.
+
+**JudgmentRecord** (returned by `get_judgment`, served by `GET
+/judgment/{path}`):
+
+```text
+path, title, petitioner, respondent, judges [string], author_judge?, scr_citation,
+neutral_citation?, cnr, disposal, outcome, decision_date (ISO date), decision_year,
+era, has_pdf, pages, clean_text?, position_map?
 ```
 
 **Zones and Opinion** (zoner → chunker):
@@ -676,6 +806,19 @@ timings_ms        object  per stage
 | LLM, then citation check | no | yes | the LLM fails |
 | Status returned | `passages` (an unresolved citation falls back to hybrid) | `answered` or `refused` | `passages` |
 
+**What citation_lookup returns:** a list of PassageRefs for the resolved
+judgment, in this order:
+
+*   **Era D:** the `issue` chunk, then its `editorial` chunks;
+*   **Era C** (no issue zone): its first `retrieval.lookup_max_editorial`
+    (3) `editorial` chunks;
+*   **No issue or editorial chunks** (zone missing): its first judgment
+    chunk.
+
+`passages_note` says "judgment found by citation". No LLM runs. A citation
+that does not resolve to a loaded judgment falls back to the hybrid route,
+with the citation text as the question.
+
 **Router (rules, no LLM).**
 
 *   A question matching an SCR, neutral-citation or CNR pattern takes the
@@ -686,13 +829,18 @@ timings_ms        object  per stage
 
 *   **Keyword search:** normalised question words joined with OR, plus each
     quoted phrase as an exact phrase (`phraseto_tsquery`). Results are
-    ranked by `ts_rank_cd`, top 50.
-*   **Vector search:** HNSW with `SET LOCAL hnsw.ef_search = 100` and
-    `hnsw.iterative_scan = relaxed_order`, so filtered queries keep scanning
-    until they have enough rows. Top 50.
+    ranked by `ts_rank_cd`, top `retrieval.keyword_k`.
+*   **Vector search:** HNSW with `SET LOCAL hnsw.ef_search =
+    retrieval.ef_search` and `hnsw.iterative_scan = relaxed_order`, so
+    filtered queries keep scanning until they have enough rows. Top
+    `retrieval.vector_k`.
 *   **Filters:** both searches apply the same SQL `WHERE` clause built from
     the filters. Rows returned and rows requested are logged.
-*   **Fusion:** reciprocal rank fusion with k = 60.
+    *   **Judge:** the filter value goes through `normalize_judge()` and is
+        compared with the normalised `judges` array.
+    *   **Act:** the filter value goes through `normalize_text()` and the
+        alias file, then is compared with `refs.value_norm`.
+*   **Fusion:** reciprocal rank fusion with `retrieval.rrf_k`.
 *   **Interface:** search sits behind `SearchEngine`. Its methods are
     `keyword`, `vector` (with an `exact` flag), `get_chunks`,
     `get_judgment`, `resolve_alias` and `links_from`.
@@ -706,56 +854,87 @@ timings_ms        object  per stage
 **Link expansion.** A retrieved Held chunk adds the judgment chunks it links
 to.
 
-*   An added chunk is ranked at its parent's rank plus 0.5.
-*   The candidate list is cut to 100 after expansion.
+*   An added chunk is ranked at its parent's rank plus
+    `retrieval.expand_rank_offset` (0.5).
+*   The fused list is cut to `retrieval.rerank_candidates` (100) **after**
+    expansion. This cap is the only limit on reranker input.
 
 **Reranking.**
 
-*   **Primary:** Qwen3-Reranker-0.6B on the local GPU, scoring header plus
-    text for each candidate. The top 8 are kept.
-*   **Fallback:** if the local reranker fails to load or errors, the system
-    calls Cohere Rerank 5 Fast through OpenRouter. The trace records
-    `reranker_fallback_used`.
+*   **Primary:** Qwen3-Reranker-0.6B on the local GPU, through
+    `transformers` (`AutoModelForCausalLM`, fp16), following its model card.
+    *   **Input:** each candidate is formatted with the model's template: a
+        system message telling it to judge whether the Document meets the
+        Query, answering only "yes" or "no"; then `<Instruct>:
+        {rerank.instruction}`, `<Query>: {question}`, `<Document>: {header +
+        text}`; then the assistant prefix the card specifies.
+    *   **Score:** the softmax over the logits of the "yes" and "no" tokens at
+        the last position. The probability of "yes" (0 to 1) is the score.
+    *   **Instruction:** `rerank.instruction` = "Given a legal research
+        question, judge whether this Supreme Court judgment passage helps
+        answer it".
+    *   **Output:** the top `retrieval.final_k` (8) are kept.
+*   **Fallback:** if the local reranker fails to load or raises, the system
+    calls Cohere Rerank 5 Fast through OpenRouter.
+    *   **Request:** `POST https://openrouter.ai/api/v1/rerank`, with
+        `Authorization: Bearer $OPENROUTER_API_KEY` and a JSON body
+        `{model: rerank.fallback_model, query, documents: [string], top_n:
+        retrieval.final_k}`. It is sent with `httpx`. The endpoint and its
+        required fields (`model`, `query`, `documents`) come from
+        OpenRouter's API reference. Confirm the response field names (a
+        relevance score per index) at implementation.
+    *   **Logging:** the trace records `reranker_fallback_used`.
 *   **Dissents** are kept and labelled.
 
 **Refusal gate.**
 
 *   **Rule:** refuse when the top score is below the threshold for the
     reranker that ran.
-*   **Thresholds:** provisional values are 0.35 for Qwen3-Reranker (its
-    probability of "relevant") and 0.20 for Cohere.
-*   **Tuning:** both are tuned by `nyaya-eval tune-threshold` on the
-    development set. Each threshold is stored with the index version and the
-    reranker version.
+*   **Where the threshold lives:** the gate reads `threshold_qwen` or
+    `threshold_cohere` from the **active `index_versions` row**. The
+    `refusal.*` values in config only seed those columns at load time.
+*   **Provisional values:** 0.35 for Qwen3-Reranker (its probability of
+    "yes") and 0.20 for Cohere.
+*   **Tuning:** `nyaya-eval tune-threshold` (Phase 2) tunes both on the
+    development set, and writes them to the active `index_versions` row.
 
 **Answer generation.**
 
-*   **Prompt:** the 8 passages, labelled P1 to P8, each with case name, zone,
-    opinion type and paragraphs.
+*   **Prompt:** the `retrieval.final_k` passages, labelled P1 to P8, each
+    with case name, zone, opinion type and paragraphs.
 *   **Rules given to the model:**
     *   every sentence in `sentences` cites at least one label, with an
-        exact quote of 8–40 words;
+        exact quote of `quote.min_words`–`quote.max_words` (8–40) words;
     *   statements that the passages do not cover a point go in `gaps`;
     *   dissents and editorial summaries are named as such.
 *   **Output:** the model returns `{"sentences": [{sentence, citations:
     [{label, quote}]}], "gaps": [string]}`.
-*   **Budgets:** 6,000 input tokens and 800 output tokens per request.
+*   **Budgets:** `llm.max_input_tokens` (6,000) and `llm.max_output_tokens`
+    (800) per request.
 *   **Client:** one OpenAI-compatible client, with temperature 0.
 *   **Retries:** one repair retry on invalid JSON, sending the parse error
-    back to the model, but only if 4 seconds or more remain before the
-    15-second limit.
+    back to the model, but only if at least `llm.repair_min_seconds_left`
+    (4) seconds remain before `timeouts.answer_deadline_s` (15), measured
+    from when the request arrived.
 *   **Failures:** a rate limit, timeout or server error returns status
     `passages`.
 
 **Citation check (code, not the LLM).** For each citation, in this order:
 
 1.  The label exists.
-2.  The quote is 8–40 words.
-3.  After normalisation (see file 11), the quote is a substring of the
-    chunk's `text`.
-4.  Separately, the sentence is scanned for SCR, INSC, SCC and AIR citation
-    patterns, and for full "X v. Y" case names. A match that is not the case
-    name of any passage in the prompt is a rule break (`uncited_case_name`).
+2.  The quote is `quote.min_words`–`quote.max_words` (8–40) words.
+3.  After `normalize_text()` (file 11) is applied to both, the quote is a
+    substring of the chunk's `text`.
+4.  Separately, the sentence is scanned:
+    *   for SCR, INSC, SCC and AIR citation patterns (file 24). A citation
+        whose `canonical_citation()` is not an alias of a passage's
+        judgment is a rule break;
+    *   for full case names, found with
+        `([A-Z][\w.&'’()-]*(?:\s+[A-Z&][\w.&'’()-]*){0,8})\s+(?:v\.|vs\.?|versus)\s+([A-Z][\w.&'’()-]*(?:\s+[A-Z&][\w.&'’()-]*){0,8})`.
+        A name matches a passage if both sides, after `normalize_text()`,
+        are contained in that passage's normalised `title`. A name matching
+        no passage is a rule break (`uncited_case_name`).
+
     Party names alone are not checked, because names such as "Union of
     India" appear in thousands of judgments.
 
@@ -782,12 +961,16 @@ to.
 *   **Server:** a FastAPI app bound to 127.0.0.1.
 *   **Endpoints:**
     *   `POST /ask`;
-    *   `GET /judgment/{path}`, which returns metadata and clean text, with
-        an optional chunk highlighted;
+    *   `GET /judgment/{path}?highlight={chunk_id}`, which returns a
+        JudgmentRecord. With `highlight`, it also returns that chunk's
+        `char_start` and `char_end`, so the page can scroll to and mark the
+        cited passage;
     *   `GET /health`;
     *   the static page.
-*   **Timeout:** each request has a 30-second limit. On timeout the status is
-    `error`, and the trace is still written.
+*   **Timeout:** each request has a `timeouts.request_s` (30) second hard
+    limit. On timeout the status is `error`, and the trace is still written.
+    The 15-second figure (`timeouts.answer_deadline_s`) is the target used
+    for the repair-retry decision and for G7, not a hard limit.
 *   **Page:**
     *   verified sentences with their citations;
     *   `gaps` as plain text;
@@ -802,12 +985,23 @@ to.
     *   **Fields:** `exclude` lists judgments to remove from candidates, to
         prevent leakage. `scored_zones` defaults to `["judgment"]`.
 *   **G4 size steps:** each step is built in its own **temporary schema**
-    (`g4_step_n`), with its own tables and HNSW index, and dropped after the
-    run.
+    (`g4_step_n`), and dropped after the run.
+    *   **Tables:** `CREATE TABLE g4_step_n.<t> (LIKE public.<t> INCLUDING
+        DEFAULTS INCLUDING GENERATED)` for `judgments`, `chunks`,
+        `chunk_vectors`, `links` and `refs`. Foreign keys are not copied,
+        and the `index_version` column holds the constant `g4_step_n`.
+    *   **Data:** rows are copied from the active version for the step's
+        subset of paths, so no re-embedding is needed.
+    *   **Indexes:** each schema gets its own HNSW and GIN indexes.
+    *   **Querying:** queries use `PostgresSearch(index_version="g4_step_n",
+        schema="g4_step_n")`, which sets `search_path`.
     *   Steps never pass through `index_versions`, so production is never
         touched.
     *   Each step contains every gold judgment, plus others added in a fixed
-        order from a recorded seed.
+        order from `eval.seed`.
+    *   **Pass rule for G4:** the upper bound of the 95% paired-bootstrap
+        confidence interval (`eval.bootstrap_samples` resamples) for the
+        drop is at most `g4.max_drop_points` (5).
     *   Steps are built one at a time, within the database's memory limit.
 *   **At each step, the harness records:**
     *   exact, HNSW, keyword, hybrid, and hybrid plus rerank results;
@@ -1101,7 +1295,21 @@ to.
 | Memory pressure (4 GB Postgres, WSL2) | slow queries, or a failed HNSW build | G4 steps built one at a time; memory limits in NFR | G4, G7 |
 | Judge disagrees with hand checks | G2 cannot be trusted | G2 counts only at kappa ≥ 0.6 | G2 |
 | Development-set paraphrases leak Held wording | recall looks better than it is | paraphrase rules; 50 hand-checked; Held hits replaced by judgment chunks before scoring | G3, G4 |
-| Act filter misses 2010–2023 | CUJ 3 drops older judgments | escalated decision (Open Questions) | CUJ 3 |
+| Era C catchword Acts are missed or named inconsistently | CUJ 3 drops some 2010–2023 judgments | Act regex checked on 15 real samples; alias file; unmatched groups in `build/skipped.csv`; unmapped names in `build/act_names_unmapped.csv`; `test_acts.py`; CUJ 3 checks `2018_10_937_952` | CUJ 3 |
+| Qwen3-Reranker template or scoring differs from the model card | scores on a different scale, so 0.35 is meaningless | template and yes/no softmax taken from the model card at the pinned `rerank.revision`; threshold re-tuned in Phase 2 | G5 |
+| OpenRouter rerank response shape differs from expectation | the fallback fails exactly when it is needed | endpoint and required fields confirmed from OpenRouter's reference; response parsing confirmed at implementation with one real call; `test_api.py` uses a fake | CUJ 6, G8 |
+
+**Accepted trade-offs** (this was the last allowed review pass):
+
+*   The OpenRouter rerank **response** fields could not be confirmed from the
+    documentation found; only the endpoint and the required request fields
+    could. Implementation confirms them with one call.
+*   The Era C Act regex and the paragraph-link regex were checked on 15
+    sampled judgments, not on the whole slice. Misses show up in
+    `build/skipped.csv` and `build/link_summary.json`, and are fixed by
+    adjusting the patterns, not the design.
+*   E2 (the second search engine) stays open by the author's choice. The
+    `SearchEngine` interface is kept so that either answer fits.
 
 ## Additional Resources
 
@@ -1177,8 +1385,6 @@ to.
 
 ## Open Questions
 
-*   **The Act filter has no source for 2010–2023 (Era C).** Extract Acts
-    from the catchwords, or cut the filter? (Escalated, E1.)
 *   **The second search engine:** an OpenSearch comparison, Qdrant (the named
     scale-out path), or both deferred? (Escalated, E2.)
 *   **The final test set:** what source, size and mix of question types?
@@ -1208,12 +1414,18 @@ to.
     | Phase | Contents |
     | --- | --- |
     | **Phase 0** | contracts, configuration, schema |
-    | **Phase 1** | the minimum end-to-end path: manifest → calibrate → parse (C/D) → zone → chunk → link → embed → load → hybrid search → rerank → LLM → citation check → page, plus the development set. Built first on 2025, then on 2010–2026. |
-    | **Phase 2** | measured gates (G3, G4, G5, G6), model selection, the BM25 trigger |
+    | **Phase 1** | the minimum end-to-end path: manifest → calibrate → parse (C/D) → zone → chunk → link → embed → load → hybrid search → rerank → LLM → citation check → page. Also the **development set** (`nyaya-eval build-devset` and its hand check) and the **G6 automatic metrics**, which are a build gate. Built first on 2025, then on 2010–2026. |
+    | **Phase 2** | measured gates G3, G4 and G5; the **G6 hand check** on the held-out sample; model selection; the BM25 trigger |
     | **Phase 3** | full answer evaluation (G1, G2, G7, G8, G9), lawyer review |
     | **Future** | see Future Improvements |
 
-    Every file below is labelled with its phase.
+    Every file below is labelled with exactly one phase, and every goal
+    belongs to exactly one phase, as in this table. G6 is split: its
+    automatic metrics are a Phase 1 gate, and its hand check is Phase 2.
+*   **Safety-critical modules** (90% branch coverage): `text/normalize.py`
+    (file 11), `answer/citation_check.py` (file 35), `search/router.py`
+    (file 32) and `link/aliases.py` (file 24). Each is labelled
+    "safety-critical" in its file entry.
 *   **Parallel work:** after Phase 0, these groups can be built in parallel
     against the contracts:
     *   `corpus/` and `parse/`;
@@ -1222,8 +1434,10 @@ to.
     *   `answer/`;
     *   `api/` and `web/`;
     *   `eval/`.
-*   **Model downloads** go to the Hugging Face cache set by `HF_HOME` (on
-    D:).
+*   **Model downloads** go to the Hugging Face cache set by `HF_HOME`,
+    which is already set on the author's machine to `D:\DevCache\huggingface`
+    (checked 2026-11-12). `HF_HUB_CACHE` is not set, so the default
+    `HF_HOME\hub` is used.
 *   **Build entry points:** `nyaya-build` subcommands, run in order:
 
     ```text
@@ -1250,12 +1464,18 @@ to.
             installed);
         *   `pandas`, `pyarrow`, `numpy`;
         *   `psycopg[binary]`, `pgvector`;
-        *   `fastapi`, `uvicorn`, `pydantic`;
+        *   `fastapi`, `uvicorn`, `pydantic`, `pydantic-settings` (reads
+            `.env`);
         *   `sentence-transformers`, `transformers`, `torch`;
-        *   `openai`, `regex`.
-    *   **PyTorch on Windows:** pin `torch` to the CUDA 12.x wheel index
-        through `[tool.uv.sources]`, because PyTorch from PyPI on Windows is
-        CPU-only.
+        *   `openai` (answer and judge LLMs), `httpx` (the OpenRouter rerank
+            call), `regex`.
+    *   **PyTorch on Windows:** declare a `[[tool.uv.index]]` named
+        `pytorch-cu128` with URL `https://download.pytorch.org/whl/cu128`
+        (`explicit = true`), and point `torch` at it through
+        `[tool.uv.sources]`. PyTorch from PyPI on Windows is CPU-only: the
+        current `.venv` has `torch 2.15.0+cpu`. If the index has no wheel for
+        the pinned torch version, use the newest `cu12x` index that does,
+        and record it here.
     *   **Extras:**
         *   `eval`: `bm25s`, `scipy`;
         *   `dev`: `pytest`, `pytest-cov`, `ruff`.
@@ -1307,28 +1527,37 @@ to.
 | --- | --- | --- |
 | `snapshot_date` | date | 2026-11-11 |
 | `paths.tar_root`, `paths.metadata_root`, `paths.build` | str | `docs/data/tar`, `docs/metadata/parquet`, `build` |
-| `versions.clean_text`, `versions.chunker`, `versions.config`, `versions.prompt` | str | `ct1`, `ch1`, `cfg1`, `answer_v1` |
-| `calibrate.sample_per_era`, `calibrate.seed` | int | 50, 42 |
-| `bands.era_c.left_x`, `bands.era_c.right_x`, `bands.top_y`, `bands.bottom_y` | [float, float] | written by `calibrate` |
+| `versions.clean_text`, `versions.chunker`, `versions.config`, `versions.prompt` | str | `ct1`, `ch1`, `cfg1`, `answer_v1`; at load time `versions.config` is suffixed with the hash of `build/bands.json` |
+| `calibrate.sample_size`, `calibrate.min_era_c`, `calibrate.seed` | int | 50, 40, 42 |
+| `bands.era_c.left_x`, `bands.era_c.right_x`, `bands.top_y`, `bands.bottom_y` | [float, float] | defaults empty; filled from `build/bands.json` by `load_settings()` |
 | `running_head_patterns` | [str] | `SUPREME COURT REPORTS`, `Digital Supreme Court Reports` |
-| `era_markers.d`, `era_markers.c` | [str] | from `scripts/layout_study.py` MARKERS |
+| `era_markers.d` | [str], int | the 5 labels in Technical Plan step 3; minimum 3 |
+| `era_markers.c` | table | margin-letter line regex `^\s*[A-H]\s*$` with minimum 5 lines; `HELD\s*:` required; years 2010–2023 |
 | `chunk.target_words`, `chunk.min_words`, `chunk.max_words` | int | 400, 80, 700 |
-| `chunk.abbreviations` | [str] | the list in Technical Plan step 5 |
-| `opinion.phrases` | ordered table | dissenting, then concurring phrase lists |
+| `chunk.abbreviations` | [str] | J., JJ., v., vs., Ors., Anr., No., Sr., Adv., i.e., e.g., viz., s., ss., r., rr., Art., Arts., para., paras. |
+| `opinion.phrases`, `opinion.phrase_window_chars` | ordered table, int | dissenting, then concurring phrase lists; 300 |
+| `acts.alias_file`, `acts.no_year_allowlist` | str, [str] | `config/act_aliases.toml`; `Constitution of India` |
 | `quote.min_words`, `quote.max_words` | int | 8, 40 |
-| `embed.model`, `embed.revision`, `embed.dim`, `embed.query_prefix` | str/int | `Qwen/Qwen3-Embedding-0.6B`, pinned revision, 1024, prefix in Technical Plan step 7 |
-| `rerank.model`, `rerank.fallback_model` | str | `Qwen/Qwen3-Reranker-0.6B`, `cohere/rerank-5-fast` |
+| `embed.model`, `embed.revision`, `embed.dim`, `embed.query_prefix` | str/int | `Qwen/Qwen3-Embedding-0.6B`; the Hugging Face commit hash, pinned at Phase 1 setup and recorded here; 1024; prefix in Technical Plan step 7 |
+| `rerank.model`, `rerank.revision`, `rerank.instruction`, `rerank.fallback_model` | str | `Qwen/Qwen3-Reranker-0.6B`; commit hash pinned at Phase 1 setup; instruction in Query pipeline "Reranking"; `cohere/rerank-5-fast` |
 | `retrieval.keyword_k`, `retrieval.vector_k`, `retrieval.rrf_k`, `retrieval.rerank_candidates`, `retrieval.final_k`, `retrieval.ef_search` | int | 50, 50, 60, 100, 8, 100 |
-| `refusal.threshold_qwen`, `refusal.threshold_cohere` | float | 0.35, 0.20 |
+| `retrieval.expand_rank_offset`, `retrieval.lookup_max_editorial` | float, int | 0.5, 3 |
+| `refusal.threshold_qwen`, `refusal.threshold_cohere` | float | 0.35, 0.20 (seed values only; the gate reads `index_versions`) |
+| `refusal.max_wrong_refusal_share` | float | 0.10 |
 | `llm.max_input_tokens`, `llm.max_output_tokens`, `llm.repair_min_seconds_left` | int | 6000, 800, 4 |
-| `timeouts.request_s`, `timeouts.llm_s` | int | 30, 12 |
-| `g6.min_paragraph_integrity`, `g6.min_size_compliance`, `g6.holdout_seed` | float/int | 0.98, 0.99, 4242 |
+| `timeouts.request_s`, `timeouts.llm_s`, `timeouts.answer_deadline_s` | int | 30, 12, 15 |
+| `load.smoke_min_hits` | int | 8 (of the 10 smoke questions) |
+| `g6.min_paragraph_integrity`, `g6.min_size_compliance`, `g6.holdout_size`, `g6.holdout_seed` | float/int | 0.98, 0.99, 50, 4242 |
+| `g4.max_drop_points` | float | 5.0 |
+| `devset.size`, `devset.handcheck_size`, `devset.unanswerable_size`, `devset.max_shared_words`, `devset.seed` | int | 300, 50, 40, 5, 11 |
 | `judge.min_kappa` | float | 0.6 |
 | `bm25_trigger.min_gap_points` | float | 3.0 |
 | `eval.bootstrap_samples`, `eval.seed` | int | 10000, 7 |
+| `latency.p95_target_s` | float | 15.0 |
+| `lawyer.sample_size`, `lawyer.seed` | int | 30, 13 |
 | `build.max_error_share` | float | 0.01 |
 | `encoder_check.min_cosine` | float | 0.999 |
-| `outcome_map` | table | `disposal_nature` text → allowed / dismissed / disposed / other |
+| `outcome_map` | table | "Appeal(s) allowed", "Case Allowed", "Case Partly allowed", "Leave Granted & Allowed" → `allowed`; "Dismissed", "Dismissed After", "Rejected", "Leave Granted & Dismissed", "Dismissed not complying condition order" → `dismissed`; "Disposed off", "Leave Granted & Disposed off", "IA disposed", "Decided Case" → `disposed`; "Directions issued", "Remitted to Lower Court", "Transferred to High Court", "Modified", "Order modified" → `directions`; "Matter referred to larger bench", "Reference answered" → `referred`; everything else, including empty → `other` |
 | `notices` | [str] | the four standing notices |
 
 #### 7. `src/nyaya/__init__.py`, `src/nyaya/*/__init__.py` (Create, Phase 0)
@@ -1341,9 +1570,16 @@ to.
 #### 8. `src/nyaya/config.py` (Create, Phase 0)
 
 *   **Type / Scope**: Python module
-*   **Proposed Changes**: `load_settings() -> Settings` validates
-    `config/settings.toml` plus the environment with pydantic. An error names
-    the missing or invalid key.
+*   **Proposed Changes**: `load_settings() -> Settings`:
+    *   reads `config/settings.toml` with `tomllib`;
+    *   merges `build/bands.json` over the `bands.*` defaults when that file
+        exists, and suffixes `versions.config` with its hash;
+    *   reads secrets from the environment and `.env` through
+        `pydantic-settings`;
+    *   validates everything with pydantic. An error names the missing or
+        invalid key.
+
+    No code writes `config/settings.toml`.
 
 #### 9. `src/nyaya/contracts.py` (Create, Phase 0)
 
@@ -1351,12 +1587,14 @@ to.
 *   **Proposed Changes**:
     *   **Pydantic models,** field for field from "Shared contracts":
         *   `ParsedDoc`, `Zones`, `HeldPoint`, `Opinion`;
-        *   `ChunkRecord`, `PassageRef`, `Citation`;
+        *   `ChunkRecord`, `PassageRef`, `Citation`, `JudgmentRecord`;
         *   `AnswerSentence`, `UnverifiedSentence`;
         *   `AskRequest`, `AskResponse`, `Filters`, `Versions`.
-    *   **Enums:**
+    *   **Enums** (member names upper case, wire values lower case):
         *   `Era` {C, D, OUT_OF_SCOPE};
-        *   `Zone` {ISSUE, EDITORIAL, JUDGMENT};
+        *   `Zone` {HEADER, ISSUE, EDITORIAL, REFERENCES, JUDGMENT}. Only
+            ISSUE, EDITORIAL and JUDGMENT appear on chunks; all five can
+            appear in `Zones.missing`;
         *   `OpinionType`;
         *   `Route` {CITATION_LOOKUP, HYBRID};
         *   `Status` {ANSWERED, PASSAGES, REFUSED, NO_MATCH_WITH_FILTERS,
@@ -1376,15 +1614,22 @@ to.
 #### 11. `src/nyaya/text/normalize.py` (Create, Phase 0)
 
 *   **Type / Scope**: Python module (safety-critical)
-*   **Proposed Changes**: `normalize_for_quote(text) -> str` is the only
-    normaliser used for quote matching. Its steps, in order:
-    1.  Unicode NFKC;
-    2.  curly quotes and dashes mapped to ASCII;
-    3.  any run of whitespace collapsed to one space;
-    4.  lower case.
+*   **Proposed Changes**: two functions, used everywhere text is compared.
+    *   **`normalize_text(text) -> str`** is used for quote matching, Act
+        names and case titles. Its steps, in order:
+        1.  Unicode NFKC;
+        2.  curly quotes mapped to straight quotes, and `–`/`—` to `-`;
+        3.  any run of whitespace collapsed to one space;
+        4.  lower case.
 
-    Hyphenated line breaks are already rejoined by the parser, so this
-    function does not handle them.
+        Hyphenated line breaks are already rejoined by the parser, so this
+        function does not handle them.
+    *   **`normalize_judge(name) -> str`:** upper case; removes "J.", "JJ.",
+        "CJI", "C.J." and "DR."; replaces full stops with spaces; collapses
+        whitespace.
+
+    Citation strings use `canonical_citation()` in file 24, not these
+    functions.
 
 #### 12. `db/migrations/001_schema.sql` (Create, Phase 0)
 
@@ -1399,11 +1644,15 @@ to.
         `index_version` referencing `index_versions` ON DELETE CASCADE.
         Columns:
         *   from the mapping in Technical Plan step 1: `title`,
-            `petitioner`, `respondent`, `judges` text[], `author_judge`,
+            `petitioner`, `respondent`, `judges` text[], `judges_norm`
+            text[] (through `normalize_judge()`), `author_judge`,
             `scr_citation`, `neutral_citation`, `cnr`, `disposal`,
             `outcome`, `decision_date` DATE, `decision_year` SMALLINT;
         *   `era`, `has_pdf`, `tar_file`, `offset_data`, `byte_size`,
             `pages`, `clean_text`, `position_map` JSONB.
+        *   **Rows without a PDF** (`has_pdf = false`) are loaded with null
+            `clean_text`, `position_map` and `era`, so metadata lookups still
+            work. They have no chunks.
     *   **`chunks`:**
         *   (`index_version`, `chunk_id`) as primary key, with a cascade;
         *   every ChunkRecord field;
@@ -1431,8 +1680,12 @@ to.
         *   B-tree on `judgments`(`index_version`, `decision_year`),
             (`index_version`, `scr_citation`) and (`index_version`,
             `neutral_citation`);
-        *   B-tree on `aliases`(`alias_norm`) and `refs`(`kind`,
-            `value_norm`).
+        *   B-tree on `aliases`(`index_version`, `alias_norm`) and
+            `refs`(`index_version`, `kind`, `value_norm`);
+        *   GIN on `judgments`(`judges_norm`).
+    *   **`index_versions`** also stores the thresholds the refusal gate reads
+        (`threshold_qwen`, `threshold_cohere`). They are seeded from config at
+        load, and updated by `tune-threshold`.
 
 #### 13. `src/nyaya/store/db.py` (Create, Phase 0)
 
@@ -1442,10 +1695,20 @@ to.
     *   `apply_migrations()` runs the files in order and records them in
         `schema_migrations`.
 
-#### 14. `tests/fixtures/normalize_cases.jsonl`, `tests/fixtures/citation_cases.jsonl` (Create, Phase 0)
+#### 14. `tests/fixtures/normalize_cases.jsonl`, `tests/fixtures/citation_cases.jsonl`, `tests/fixtures/manifest_small.parquet` (Create, Phase 0)
 
 *   **Type / Scope**: Test fixtures
 *   **Proposed Changes**:
+    *   **`manifest_small.parquet`:** about 20 rows copied from the real
+        metadata, including:
+        *   one duplicated `path` in two folders, with different
+            `scraped_at`;
+        *   one row with no PDF;
+        *   one row with an empty `disposal_nature`;
+        *   one `S_` path.
+
+        Columns as in the real Parquet, plus a `folder_year` column that
+        stands in for the file path.
     *   **`normalize_cases.jsonl`:** at least 40 cases, covering curly
         quotes, dashes, odd spacing and NFKC.
     *   **`citation_cases.jsonl`:** at least 40 cases. Each holds a chunk
@@ -1474,10 +1737,12 @@ to.
 *   **Type / Scope**: Python module
 *   **Proposed Changes**: `build_manifest(settings) -> build/manifest.parquet`
     covers all years. It applies:
-    *   the column mapping;
+    *   the column mapping, with `folder_year` taken from each Parquet file's
+        path (`year=YYYY`);
     *   the duplicate rule;
-    *   the tar join;
-    *   `has_pdf`.
+    *   the tar join, looking in the `folder_year` tar first;
+    *   `has_pdf`. Rows without a PDF stay in the manifest and in
+        `build/judgments/<year>.parquet`, with null text fields.
 
     It also writes `build/manifest_summary.json`: rows in, duplicates
     removed, judgments without a PDF (counted after removing duplicates),
@@ -1486,20 +1751,24 @@ to.
 #### 17. `src/nyaya/parse/calibrate.py` (Create, Phase 1)
 
 *   **Type / Scope**: Python module
-*   **Proposed Changes**: `calibrate(settings)`:
-    *   samples 50 Era C and 50 Era D PDFs with seed 42;
+*   **Proposed Changes**: `calibrate(settings)`, for Era C only:
+    *   samples `calibrate.sample_size` judgments with a PDF and a decision
+        year from 2010 to 2023, using `calibrate.seed`;
+    *   runs `classify` on each one's first 3 pages, and keeps only Era C.
+        If fewer than `calibrate.min_era_c` remain, it exits with code 2;
     *   clusters the x-positions of lone uppercase A to H letters into a
-        left and a right band per era;
+        left and a right band;
     *   measures the top and bottom furniture bands;
-    *   writes them to `config/settings.toml`;
+    *   writes them to `build/bands.json` with the standard `json` module;
     *   exits with code 2 and the message "no margin band found for era C"
-        if Era C has no cluster.
+        if there is no cluster.
 
 #### 18. `src/nyaya/parse/eras.py` (Create, Phase 1)
 
 *   **Type / Scope**: Python module
-*   **Proposed Changes**: `classify(first3_text) -> Era`, using the
-    `era_markers` from config. The result is C, D or OUT_OF_SCOPE.
+*   **Proposed Changes**: `classify(first3_text, decision_year) -> Era`,
+    applying the rules in Technical Plan step 3 with `era_markers.*` from
+    config. The result is C, D or OUT_OF_SCOPE.
 
 #### 19. `src/nyaya/parse/pdf_layout.py` (Create, Phase 1)
 
@@ -1508,26 +1777,51 @@ to.
     ParsedDoc`.
     *   It removes words by position, as in Technical Plan step 3.
     *   It rejoins hyphenated words.
-    *   It builds the position map, using printed pages from the SCR start
-        page in `path`.
+    *   It builds the position map. The printed page is the SCR start page
+        from `path` (for example 230 in `2025_1_230_238`) plus the PDF page
+        index.
+    *   It sets `pages` to the PDF's page count.
 
-#### 20. `src/nyaya/zone/zoner.py` (Create, Phase 1)
+#### 20. `src/nyaya/zone/zoner.py`, `config/act_aliases.toml` (Create, Phase 1)
 
-*   **Type / Scope**: Python module
+*   **Type / Scope**: Python module, and a configuration file
 *   **Proposed Changes**: `zone(parsed) -> Zones`, applying the start and
     end markers per era from Technical Plan step 4.
-    *   Held points are split on "1.1"-style numbering in Era C, and on
-        "Held:" paragraphs in Era D.
-    *   It extracts `para_refs`, and the Era D Acts and keywords.
+    *   **Held points and paragraph links:** the rules and regexes in
+        Technical Plan step 4, "Held points". **Both eras** extract
+        `para_refs`.
+    *   **Era D:** also extracts the "List of Acts" and "List of Keywords"
+        entries.
+    *   **Era C Acts (author decision E1, 2026-11-12):** the rules and regex
+        in Technical Plan step 4, "Era C Acts": line joining, dash
+        normalisation, groups split at full stops that do not end a
+        `chunk.abbreviations` entry, **every** Act in a group captured, and
+        `acts.no_year_allowlist` for "Constitution of India".
+    *   **Normalising Act names:**
+        *   Each Act name goes through `normalize_text()` (file 11), then
+            `config/act_aliases.toml`. That file maps variants to one
+            canonical name, for example `ipc`, `indian penal code, 1860` and
+            `penal code, 1860` all map to `penal code, 1860`.
+        *   An unmapped name keeps its normalised form.
+        *   The build writes the 200 most frequent unmapped names to
+            `build/act_names_unmapped.csv`, so the alias file can be
+            extended.
+    *   **Starting alias file:** variants for the IPC, CrPC, CPC, Evidence
+        Act, Constitution of India, NDPS Act, Arbitration and Conciliation
+        Act, Income Tax Act, BNS, BNSS and BSA.
+    *   **Filter matching:** the filter value is normalised and mapped the
+        same way before it is compared with `refs.value_norm`.
 
 #### 21. `src/nyaya/zone/opinions.py` (Create, Phase 1)
 
 *   **Type / Scope**: Python module
 *   **Proposed Changes**: `split_opinions(parsed, zones, judges) ->
     [Opinion]`.
-    *   Authors come from the `judges` metadata, plus the Era D "*" marker.
+    *   Opinion starts use the regex in Technical Plan step 4, "Opinions".
+        Names are compared after `normalize_judge()` with the bench line and
+        the `judge` metadata, plus the Era D "*" marker.
     *   Opinion types come from the ordered phrase list, matched in the first
-        300 characters.
+        `opinion.phrase_window_chars` characters.
     *   `majority` only when there is exactly one opinion; `unknown`
         otherwise.
 
@@ -1539,9 +1833,9 @@ to.
     *   **Issue and editorial chunks** come first, one per Held point.
     *   **Judgment chunks:**
         *   paragraphs found with the regex in Technical Plan step 5;
-        *   merged up to 400 words;
-        *   split above 700 words with one sentence of overlap;
-        *   merged when under 80 words.
+        *   merged up to `chunk.target_words`;
+        *   split above `chunk.max_words` with one sentence of overlap;
+        *   merged when under `chunk.min_words`.
     *   **No paragraph numbers:** falls back to blank-line paragraphs.
     *   **Fields:** `section_label` from headings in capitals; pages from
         the position map; the header from metadata.
@@ -1559,19 +1853,24 @@ to.
 
 #### 24. `src/nyaya/link/aliases.py` (Create, Phase 1)
 
-*   **Type / Scope**: Python module
+*   **Type / Scope**: Python module (safety-critical)
 *   **Proposed Changes**:
     *   **Patterns:**
-        *   SCR: `\[(\d{4})\]\s*(\d+)\s*S\.?\s*C\.?\s*R\.?\s*(\d+)` and
-            `(\d{4})\s*\((\d+)\)\s*SCR\s*(\d+)`;
+        *   SCR: `\[(\d{4})\]\s*(SUPP\.?\s*)?(\d+)\s*S\.?\s*C\.?\s*R\.?\s*(\d+)`
+            and `(\d{4})\s*\((\d+)\)\s*SCR\s*(\d+)`;
         *   neutral: `(\d{4})\s*INSC\s*(\d+)`;
         *   SCC: `\((\d{4})\)\s*(\d+)\s*SCC\s*(\d+)`;
         *   AIR: `AIR\s*(\d{4})\s*SC\s*(\d+)`;
-        *   CNR: a 16-character code.
-    *   **`canonical_citation(s)`** turns each form into a canonical string,
-        such as `scr:2025:1:230` or `insc:2025:31`.
-    *   **`build_alias_rows(manifest)`** builds the SCR, neutral and CNR
-        rows.
+        *   CNR: `\b[A-Z]{4}\d{12}\b`. It matched all 13,007 CNRs from
+            2010–2026.
+    *   **`canonical_citation(s)`** turns each form into one canonical
+        string, matching the forms in Technical Plan step 6:
+        `scr:2025:1:230`, `scr:2005:s6:72` (Supplement), `insc:2025:31`,
+        `scc:2009:8:751`, `air:1999:3750`, `cnr:escr010004242025`.
+        `nc_display` values have no spaces (`2025INSC719`), and the pattern
+        accepts both forms.
+    *   **`build_alias_rows(manifest, loaded_paths)`** builds the SCR,
+        neutral and CNR rows only for paths in `loaded_paths`.
     *   **`find_citations(text)`** returns (span, kind, canonical) for each
         match.
 
@@ -1595,9 +1894,15 @@ to.
         *   `build/links/<year>.parquet`.
 
         It also writes `build/aliases.parquet`.
-    *   **Logs:** skipped judgments go to `build/skipped.csv` and exceptions
-        to `build/errors.jsonl`. The build exits with code 4 if errors exceed
-        1% of judgments.
+    *   **Logs:**
+        *   `build/skipped.csv` has the columns `path`, `stage` (`parse` |
+            `zone` | `acts` | `link`), `reason` (`era_out_of_scope`,
+            `no_pdf`, `zone_missing`, `act_unmatched`, `para_unresolved`)
+            and `detail`. Unmatched catchword groups and judgments are
+            separated by `stage`.
+        *   Exceptions go to `build/errors.jsonl`.
+        *   The build exits with code 4 if errors exceed
+            `build.max_error_share` of judgments.
     *   **`embed`** writes `build/vectors/<year>.npy` and
         `build/vectors/<year>.ids.txt`.
 
@@ -1608,15 +1913,22 @@ to.
     *   **`Embedder`:** Qwen3-Embedding-0.6B at fp16 on CUDA, with
         normalised output. It adds the query prefix to queries only.
     *   **`Reranker`:**
-        *   **Primary:** Qwen3-Reranker-0.6B on CUDA, taking (question,
-            header + text) pairs and returning a probability of "relevant".
-        *   **`FallbackReranker`:** Cohere through OpenRouter, used only if
-            the primary raises an error.
+        *   **Primary:** Qwen3-Reranker-0.6B through `transformers`
+            (`AutoModelForCausalLM`, fp16, CUDA), at `rerank.revision`. It
+            formats each (question, header + text) pair with the model-card
+            template and `rerank.instruction`, and returns the softmax
+            probability of the "yes" token against "no" (see Query pipeline,
+            "Reranking").
+        *   **`FallbackReranker`:** Cohere through OpenRouter, with `httpx`:
+            `POST https://openrouter.ai/api/v1/rerank`, body `{model, query,
+            documents, top_n}`. It is used only if the primary raises an
+            error.
     *   **Startup checks:**
         *   assert `torch.cuda.is_available()`;
-        *   if the index was embedded on Kaggle, compare 5 reference
-            passages from `build/vectors/reference/`, which must reach a
-            cosine of 0.999 or more.
+        *   if the index was embedded on Kaggle, compare the 5 reference
+            passages in `build/vectors/reference/passages.json` with
+            `build/vectors/reference/vectors.npy`. They must reach a cosine of
+            `encoder_check.min_cosine` or more.
 
 #### 28. `kaggle/embed_corpus.py`, `kaggle/README.md` (Create, Future)
 
@@ -1625,20 +1937,30 @@ to.
     *   **Purpose:** embedding for large runs.
     *   **Inputs and outputs:** the same input and output formats as
         `nyaya-build embed`.
-    *   **Reference vectors:** it also writes `reference/passages.json` and
-        `reference/vectors.npy`.
+    *   **Reference vectors:** it also writes
+        `build/vectors/reference/passages.json` and
+        `build/vectors/reference/vectors.npy`.
 
 #### 29. `src/nyaya/store/loader.py` (Create, Phase 1)
 
 *   **Type / Scope**: Python module
 *   **Proposed Changes**:
     *   **`load(version, build_dir)`** inserts the `index_versions` row as
-        `building`.
-        *   It uses COPY, in this order: judgments, chunks, vectors, aliases,
-            links, refs.
+        `building`, with `threshold_qwen` and `threshold_cohere` seeded from
+        `refusal.*`.
+        *   It uses COPY, in this order: judgments, chunks, vectors, aliases
+            (built only for the paths just loaded), links, refs.
         *   It builds the indexes.
-        *   It runs the post-load checks (IDs, G6, the 10 Phase 1
-            questions), then sets `ready`.
+        *   It runs the post-load checks through
+            `PostgresSearch(index_version=version)`, never the LLM:
+            *   the IDs match;
+            *   the G6 automatic metrics pass;
+            *   the smoke check: the route matches for all 10 questions in
+                `phase1_smoke.jsonl`, and the expected judgment is in the
+                reranked top `retrieval.final_k` for at least
+                `load.smoke_min_hits` of them.
+        *   If they pass, it sets `ready`. Otherwise it leaves the version
+            `building`, and exits with code 5 and the failing check.
     *   **`activate(version)`** accepts only `ready`. It sets `active`,
         retires the previous active version, and deletes any version older
         than the newly retired one.
@@ -1650,20 +1972,25 @@ to.
     *   `keyword(question, filters, k) -> [SearchHit]`;
     *   `vector(qvec, filters, k, exact) -> [SearchHit]`;
     *   `get_chunks(ids) -> [ChunkRecord]`;
-    *   `get_judgment(path) -> dict`;
+    *   `get_judgment(path) -> JudgmentRecord?`;
     *   `resolve_alias(canonical) -> path?`;
     *   `links_from(chunk_ids) -> {from: [to]}`.
 
 #### 31. `src/nyaya/search/postgres.py` (Create, Phase 1)
 
 *   **Type / Scope**: Python module
-*   **Proposed Changes**: `PostgresSearch`, with every query scoped to the
-    active version (or to a G4 schema, through `search_path`).
+*   **Proposed Changes**: `PostgresSearch(index_version=None, schema=None)`.
+    *   **Scope:** every query is limited to `index_version`.
+        *   With `None`, the version is the one whose status is `active`,
+            read once at startup.
+        *   The loader passes the `building` version explicitly.
+        *   G4 passes a schema, which is applied through `search_path`.
     *   **Filters:** turned into parameterised `WHERE` clauses:
         *   `decision_year` between the given years;
-        *   `judges @> {judge}`;
-        *   an Act through an `EXISTS` on `refs`;
-        *   `outcome`.
+        *   `judges_norm @> ARRAY[normalize_judge(judge)]`;
+        *   an Act, through an `EXISTS` on `refs` with `kind = 'act'` and
+            `value_norm` equal to the normalised, alias-mapped filter value;
+        *   `outcome` equal to one of the `outcome_map` values.
     *   **Keyword search:** an OR `to_tsquery`, plus `phraseto_tsquery` for
         quoted phrases, ranked by `ts_rank_cd`.
     *   **Vector search:** `SET LOCAL hnsw.ef_search` and
@@ -1672,13 +1999,15 @@ to.
 
 #### 32. `src/nyaya/search/fusion.py`, `src/nyaya/search/router.py`, `src/nyaya/search/expand.py` (Create, Phase 1)
 
-*   **Type / Scope**: Python modules
+*   **Type / Scope**: Python modules (`router.py` is safety-critical)
 *   **Proposed Changes**:
-    *   **`rrf(lists, k=60)`**: reciprocal rank fusion.
+    *   **`rrf(lists, k)`**: reciprocal rank fusion, with `k` from
+        `retrieval.rrf_k`.
     *   **`route(question)`**: CITATION_LOOKUP if `find_citations` finds an
         SCR, neutral or CNR match; otherwise HYBRID.
     *   **`expand(hits, engine)`**: adds linked judgment chunks at their
-        parent's rank plus 0.5, then cuts the list to 100.
+        parent's rank plus `retrieval.expand_rank_offset`, then cuts the list
+        to `retrieval.rerank_candidates`.
 
 #### 33. `src/nyaya/answer/llm_client.py` (Create, Phase 1)
 
@@ -1712,8 +2041,10 @@ to.
     *   **`check(llm_output, label_map, chunks, settings) -> (verified,
         unverified, gaps, rule_breaks)`**:
         *   runs steps 1–4 from the Technical Plan;
-        *   for step 4, compares the "X v. Y" names in each sentence with the
-            case names of the passages in the prompt, after normalisation;
+        *   for step 4, extracts "X v. Y" names with the regex in the
+            Technical Plan's "Citation check". A name matches a passage when
+            both sides, after `normalize_text()`, are contained in that
+            passage's normalised `title`;
         *   reports the first failing reason, in order.
     *   **`notices(settings) -> [str]`** returns the four standing notices.
 
@@ -1722,7 +2053,8 @@ to.
 *   **Type / Scope**: Python modules
 *   **Proposed Changes**:
     *   **`ask(request, deps) -> AskResponse`** follows the route table.
-        *   **Citation route:** alias lookup; if it does not resolve, the
+        *   **Citation route:** alias lookup, returning the PassageRefs listed
+            in "What citation_lookup returns". If it does not resolve, the
             hybrid route.
         *   **Hybrid route:** search, fusion, expansion, reranking (with the
             fallback), the refusal gate, then the LLM.
@@ -1737,7 +2069,8 @@ to.
 
 *   **Type / Scope**: FastAPI application (`nyaya-api`)
 *   **Proposed Changes**:
-    *   **Endpoints:** `POST /ask`, `GET /judgment/{path}?highlight=`,
+    *   **Endpoints:** `POST /ask`, `GET /judgment/{path}?highlight={chunk_id}`
+        (a JudgmentRecord, plus the highlighted chunk's character span),
         `GET /health` (active version, models loaded, whether the fallback is
         configured), and the static files.
     *   **Startup:** loads the settings and models once, and runs the
@@ -1767,8 +2100,13 @@ to.
 #### 39. `src/nyaya/eval/cli.py` (Create, Phase 1)
 
 *   **Type / Scope**: CLI dispatcher (`nyaya-eval`)
-*   **Proposed Changes**: subcommands:
-    *   `build-devset`;
+*   **Proposed Changes**: subcommands. Each is labelled with the phase in
+    which it is first needed; the dispatcher itself is Phase 1.
+    *   `build-devset` (Phase 1);
+    *   `g6-holdout` (Phase 2): samples `g6.holdout_size` judgments with
+        `g6.holdout_seed`, excluding the calibration sample, and writes
+        their clean text with the PDF page images side by side to
+        `eval/runs/g6_holdout/` for the hand check;
     *   `retrieval`;
     *   `size-steps`;
     *   `bm25-trigger`;
@@ -1784,25 +2122,38 @@ to.
 *   **Type / Scope**: Python module (`nyaya-eval build-devset`)
 *   **Proposed Changes**:
     *   **Selection:** chooses Held points with resolved links, spread across
-        years with a seed.
+        years with `devset.seed`, until `devset.size` questions are kept.
     *   **Drafting:** drafts questions through the free LLM, with the
         paraphrasing rules.
-    *   **Rejection:** rejects any question sharing a run of 5 or more words
-        with its Held point.
+    *   **Rejection:** rejects any question sharing a run of
+        `devset.max_shared_words` or more words with its Held point.
     *   **Output:** writes `eval/datasets/dev_v1.jsonl`, with fields `{id,
         question, type, gold: [{path, para_labels}], exclude, scored_zones,
         source_held_chunk}`.
     *   **Hand check:** writes `eval/datasets/dev_v1_handcheck.csv` for the
-        author's 50-question check.
+        author's `devset.handcheck_size`-question check.
 
-#### 41. `eval/datasets/README.md`, `eval/datasets/adversarial_v1.jsonl`, `eval/datasets/unanswerable_v1.jsonl` (Create, Phase 1)
+#### 41. `eval/datasets/README.md`, `eval/datasets/phase1_smoke.jsonl`, `eval/datasets/adversarial_v1.jsonl`, `eval/datasets/unanswerable_v1.jsonl`, `eval/datasets/hand_labels_v1.jsonl` (Create, Phase 1; `hand_labels_v1.jsonl` content in Phase 3)
 
 *   **Type / Scope**: Formats and datasets
 *   **Proposed Changes**:
-    *   **`README.md`:** the JSONL formats, and the anti-leakage rules.
+    *   **`README.md`:** the JSONL formats below, and the anti-leakage rules.
+    *   **`phase1_smoke.jsonl`:** 10 author-written questions about 2025
+        judgments, 7 answerable and 3 not.
+        *   **Format:** `{id, question, expected_route ("citation_lookup" |
+            "hybrid"), expected_path (string | null), filters (optional)}`.
+        *   **Coverage:** includes one citation question ("2025 INSC 31",
+            expected `2025_1_230_238`), one question with an Act filter, and
+            "anticipatory bail section 438" (expected route `hybrid`).
+        *   The load check and the Phase 1 verification both use it.
     *   **`adversarial_v1.jsonl`:** about 20 questions, each with `expect`
         set to refuse, notice or cited_only.
-    *   **`unanswerable_v1.jsonl`:** about 40 author-written questions.
+    *   **`unanswerable_v1.jsonl`:** `devset.unanswerable_size`
+        author-written questions.
+    *   **`hand_labels_v1.jsonl`:** `{id, sentence, chunk_id, label
+        ("supported" | "partial" | "unsupported"), labeller}`. The file and
+        its format are created in Phase 1; the author fills it in Phase 3,
+        for `judge-validate`.
 
 #### 42. `src/nyaya/eval/retrieval.py`, `src/nyaya/eval/size_steps.py`, `src/nyaya/eval/bm25_trigger.py` (Create, Phase 2)
 
@@ -1827,8 +2178,9 @@ to.
 *   **Proposed Changes**:
     *   For each reranker, choose the threshold that maximises correct
         refusals on unanswerable questions, while keeping wrong refusals of
-        answerable questions at 10% or less.
-    *   Write it to the active `index_versions` row.
+        answerable questions at `refusal.max_wrong_refusal_share` or less.
+    *   Write it to the active `index_versions` row, which is the only place
+        the refusal gate reads.
 
 #### 44. `scripts/select_models.py`, `docs/model_selection.md` (Create, Phase 2)
 
@@ -1859,7 +2211,7 @@ to.
         `eval/datasets/hand_labels_v1.jsonl`, whose format is `{sentence,
         chunk_id, label}`.
     *   **`latency.py`:** runs a fixed query set warm, one request at a time,
-        and reports the 95th percentile against 15 seconds.
+        and reports the 95th percentile against `latency.p95_target_s`.
 
 #### 46. `eval/lawyer_review/rubric_v1.md`, `src/nyaya/eval/lawyer.py` (Create, Phase 3)
 
@@ -1870,7 +2222,8 @@ to.
         *   law stated correctly;
         *   nothing important missing;
         *   usable as a research starting point.
-    *   **`lawyer-export`:** writes 30 sampled answers to CSV and HTML.
+    *   **`lawyer-export`:** writes `lawyer.sample_size` answers, sampled
+        with `lawyer.seed`, to CSV and HTML.
     *   **`lawyer-import`:** reads the ratings CSV into `eval_runs`.
     *   **Status:** qualitative evidence, never a gate.
 
@@ -1892,11 +2245,21 @@ to.
             is a normalised substring of its chunk;
         *   an unverified sentence never carries citation details.
     *   **`test_aliases.py`:** each citation form, including `2025INSC31`
-        without spaces, gives the right canonical string.
+        without spaces and `[2006] SUPP. 6 S.C.R. 72`, gives the right
+        canonical string; aliases are built only for loaded paths.
     *   **`test_router.py`:** at least 30 labelled questions, including
         "anticipatory bail section 438", which must route to hybrid.
-    *   **`test_manifest.py`:** on a small fixture Parquet file, checks the
-        duplicate rule, the column mapping and dates.
+    *   **`test_manifest.py`:** on `tests/fixtures/manifest_small.parquet`,
+        checks the duplicate rule, the column mapping, `folder_year`, the
+        `outcome_map` lookup (including the empty value) and dates.
+    *   **`test_acts.py`:** Era C catchword fixtures taken from the 15
+        verified samples. They cover an en dash, a wrapped Act name, two
+        Acts in one group, "Penal Code; 1860", an upper-case Act, "Service
+        Law:" (not an Act) and "Constitution of India – Art. 14"
+        (allowlist).
+    *   **`test_para_links.py`:** "[Para 9]", "[Paras 7, 8]", "[Paras 17 and
+        18]", "[Para 11.1 & 12]", "[Paras 10-12]" (expands to 10, 11, 12),
+        "[Para 13) [727-E]" and "[Para C 10)".
     *   **`test_tarstore.py`:** offset reads match `tarfile` for 5 PDFs.
         Skipped if `docs/data` is absent.
     *   **`test_pdf_layout.py`:** on 4 sample PDFs (2015, 2018, 2023, 2025):
@@ -1934,26 +2297,36 @@ to.
         `answer/citation_check.py`, `search/router.py` and
         `link/aliases.py`, the safety-critical modules. At least 70% overall.
 *   **Phase 1, end to end on 2025:**
-    1.  Run in order: `calibrate`, `parse-chunk`, `embed`, `load`,
-        `activate`, then `nyaya-api`.
-    2.  **Phase 1 questions:** 10 questions in
-        `eval/datasets/phase1_smoke.jsonl` each return the expected route.
-        Each of the 7 answerable ones has its expected judgment among the
-        reranked top 8. This does not depend on the refusal threshold.
-    3.  **CUJ checklist:**
+    1.  Run in order: `manifest`, `calibrate`, `parse-chunk`, `embed`,
+        `load`, `activate`, then `nyaya-api`.
+    2.  **G6 automatic metrics** (a Phase 1 build gate): `parse-chunk` exits
+        0, and `build/chunk_metrics.json` meets `g6.min_paragraph_integrity`
+        and `g6.min_size_compliance`, with zero chunks over the model limit.
+    3.  **Smoke check:** `load` sets `ready` only if the smoke check passes:
+        the route matches for all 10 questions in `phase1_smoke.jsonl`, and
+        the expected judgment is in the reranked top `retrieval.final_k` for
+        at least `load.smoke_min_hits` of them. This depends neither on the
+        LLM nor on the refusal threshold.
+    4.  **CUJ checklist:**
         *   **CUJ 1:** every shown citation opens the right paragraph.
         *   **CUJ 2:** "2025 INSC 31" returns `passages` for
             `2025_1_230_238`.
-        *   **CUJ 3:** the filters appear in the trace.
-        *   **CUJ 4:** a nonsense question gives `refused` with the nearest
+        *   **CUJ 3:** the filters appear in the trace. **After the
+            2010–2026 build,** an Act filter of "Arbitration and Conciliation
+            Act, 1996" returns `2018_10_937_952` (an Era C judgment whose Act
+            appears only in its catchwords) among the candidates.
+        *   **CUJ 4:** a question from `unanswerable_v1.jsonl`, about a point
+            no 2010–2026 judgment addresses, gives `refused` with the nearest
             passages.
         *   **CUJ 5:** the advice notice is shown.
         *   **CUJ 6:** a bad LLM key gives `passages`.
-*   **G6 on 2010–2026:** the `parse-chunk` metrics pass, and the held-out
-    hand check of 50 PDFs (seed 4242) finds zero margin letters or running
-    heads.
+    5.  **Development set:** `nyaya-eval build-devset` writes `dev_v1.jsonl`,
+        and the author completes the hand check.
+    6.  Repeat steps 1–3 for 2010–2026.
 *   **Phase 2:**
-    *   `nyaya-eval build-devset` (with the hand check);
+    *   `nyaya-eval g6-holdout`: the author's hand check of
+        `g6.holdout_size` held-out PDFs finds zero margin letters or running
+        heads (G6, hand-check part);
     *   `retrieval`, for G3;
     *   `size-steps`, for G4;
     *   `bm25-trigger`;
