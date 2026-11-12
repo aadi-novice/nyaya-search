@@ -1,0 +1,185 @@
+# Every tunable value in Nyaya Search. No code writes this file.
+# build/bands.json (written by `nyaya-build calibrate`) is merged over the
+# [bands] defaults by load_settings(), and its hash suffixes versions.config.
+
+snapshot_date = 2026-11-11
+
+running_head_patterns = ["SUPREME COURT REPORTS", "Digital Supreme Court Reports"]
+
+notices = [
+    "This is not legal advice.",
+    "Later overruling of a judgment is not tracked.",
+    "Your question is sent to a hosted language model.",
+    "Judgments may cite the IPC, CrPC or Indian Evidence Act, which were replaced by the BNS, BNSS and BSA from 1 July 2024.",
+]
+
+[paths]
+tar_root = "docs/data/tar"
+metadata_root = "docs/metadata/parquet"
+build = "build"
+
+[versions]
+clean_text = "ct1"
+chunker = "ch1"
+config = "cfg1"
+prompt = "answer_v1"
+
+[calibrate]
+sample_size = 50
+min_era_c = 40
+seed = 42
+
+# Empty until filled from build/bands.json. Each band is [low, high].
+[bands]
+top_y = []
+bottom_y = []
+
+[bands.era_c]
+left_x = []
+right_x = []
+
+[era_markers.d]
+labels = [
+    "Issue for Consideration",
+    "Headnotes",
+    "Case Law Cited",
+    "List of Acts",
+    "List of Keywords",
+]
+min_count = 3
+
+[era_markers.c]
+margin_line_regex = '^\s*[A-H]\s*$'
+min_margin_lines = 5
+held_regex = 'HELD\s*:'
+year_from = 2010
+year_to = 2023
+
+[chunk]
+target_words = 400
+min_words = 80
+max_words = 700
+abbreviations = [
+    "J.", "JJ.", "v.", "vs.", "Ors.", "Anr.", "No.", "Sr.", "Adv.", "i.e.",
+    "e.g.", "viz.", "s.", "ss.", "r.", "rr.", "Art.", "Arts.", "para.", "paras.",
+]
+
+[opinion]
+phrase_window_chars = 300
+
+# Priority order: dissenting first, then concurring.
+[opinion.phrases]
+dissenting = ["I regret I am unable to agree", "dissent"]
+concurring = ["I agree", "concurring"]
+
+[acts]
+alias_file = "config/act_aliases.toml"
+no_year_allowlist = ["Constitution of India"]
+
+[quote]
+min_words = 8
+max_words = 40
+
+[embed]
+model = "Qwen/Qwen3-Embedding-0.6B"
+revision = ""  # Hugging Face commit hash, pinned at Phase 1 setup
+dim = 1024
+query_prefix = "Instruct: Given a legal research question, retrieve Supreme Court judgment passages that answer it\nQuery: "
+
+[rerank]
+model = "Qwen/Qwen3-Reranker-0.6B"
+revision = ""  # Hugging Face commit hash, pinned at Phase 1 setup
+instruction = "Given a legal research question, judge whether this Supreme Court judgment passage helps answer it"
+fallback_model = "cohere/rerank-5-fast"
+
+[retrieval]
+keyword_k = 50
+vector_k = 50
+rrf_k = 60
+rerank_candidates = 100
+final_k = 8
+ef_search = 100
+expand_rank_offset = 0.5
+lookup_max_editorial = 3
+
+# Seed values only: the refusal gate reads the active index_versions row.
+[refusal]
+threshold_qwen = 0.35
+threshold_cohere = 0.20
+max_wrong_refusal_share = 0.10
+
+[llm]
+max_input_tokens = 6000
+max_output_tokens = 800
+repair_min_seconds_left = 4
+
+[timeouts]
+request_s = 30
+llm_s = 12
+answer_deadline_s = 15
+
+[load]
+smoke_min_hits = 8
+
+[g6]
+min_paragraph_integrity = 0.98
+min_size_compliance = 0.99
+holdout_size = 50
+holdout_seed = 4242
+
+[g4]
+max_drop_points = 5.0
+
+[devset]
+size = 300
+handcheck_size = 50
+unanswerable_size = 40
+max_shared_words = 5
+seed = 11
+
+[judge]
+min_kappa = 0.6
+
+[bm25_trigger]
+min_gap_points = 3.0
+
+[eval]
+bootstrap_samples = 10000
+seed = 7
+
+[latency]
+p95_target_s = 15.0
+
+[lawyer]
+sample_size = 30
+seed = 13
+
+[build]
+max_error_share = 0.01
+
+[encoder_check]
+min_cosine = 0.999
+
+# disposal_nature (trimmed) -> outcome. Anything not listed, including the
+# empty value, maps to `default`.
+[outcome_map]
+default = "other"
+
+[outcome_map.values]
+allowed = ["Appeal(s) allowed", "Case Allowed", "Case Partly allowed", "Leave Granted & Allowed"]
+dismissed = [
+    "Dismissed",
+    "Dismissed After",
+    "Rejected",
+    "Leave Granted & Dismissed",
+    "Dismissed not complying condition order",
+]
+disposed = ["Disposed off", "Leave Granted & Disposed off", "IA disposed", "Decided Case"]
+directions = [
+    "Directions issued",
+    "Remitted to Lower Court",
+    "Transferred to High Court",
+    "Modified",
+    "Order modified",
+]
+referred = ["Matter referred to larger bench", "Reference answered"]

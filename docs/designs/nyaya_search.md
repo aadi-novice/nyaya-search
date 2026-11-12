@@ -1476,6 +1476,11 @@ to.
         current `.venv` has `torch 2.15.0+cpu`. If the index has no wheel for
         the pinned torch version, use the newest `cu12x` index that does,
         and record it here.
+        *   **Recorded 2026-11-12 (Phase 0):** no `cu12x` index has a
+            torch 2.15.0 wheel for cp312 / win_amd64 (`cu128` stops at
+            2.11.0; `cu126` at 2.14.1; 2.15.0 exists only for `cu132` and
+            CPU). `pyproject.toml` pins `torch==2.14.1` from an index named
+            `pytorch-cu126` (`https://download.pytorch.org/whl/cu126`).
     *   **Extras:**
         *   `eval`: `bm25s`, `scipy`;
         *   `dev`: `pytest`, `pytest-cov`, `ruff`.
