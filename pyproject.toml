@@ -35,8 +35,10 @@ dev = ["pytest>=8.3", "pytest-cov>=6.0", "ruff>=0.8"]
 kaggle = ["kaggle>=2.2", "six>=1.16"]
 # nyaya-eval ragas: LLM-judged RAGAS metrics beside our own checks. Not in the
 # CI install line; the tests skip without it. See [tool.uv] below for the
-# jiter and rich overrides it needs.
-ragas = ["ragas==0.4.3"]
+# jiter and rich overrides it needs. ragas 0.4.3 imports
+# langchain_community.chat_models.vertexai, which langchain-community 0.4.2
+# removed.
+ragas = ["ragas==0.4.3", "langchain-community<0.4.2"]
 
 [project.scripts]
 nyaya-build = "nyaya.build:main"
