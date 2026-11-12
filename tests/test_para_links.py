@@ -63,3 +63,15 @@ def test_find_para_links_spans():
 )
 def test_parse_para_list_edge_cases(inner, expected):
     assert parse_para_list(inner) == expected
+
+
+def test_ocr_forms_from_scanned_years():
+    assert para_refs("set aside altogether. [Paras 11 to 15) [259-H;") == [
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+    ]
+    assert para_refs("constituted by the Union government. (Paras 5, 6] (404-D-GJ") == ["5", "6"]
+    assert para_refs("(para 12 of the impugned order)") == []

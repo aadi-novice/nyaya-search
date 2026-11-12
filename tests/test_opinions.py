@@ -200,3 +200,19 @@ def test_bench_names_missing():
 )
 def test_names_match(a, b, same):
     assert names_match(a, b) is same
+
+
+def test_dash_between_author_and_first_paragraph(settings):
+    text = (
+        "A v. B\n[A.K. SIKRI AND R. F. NARIMAN, JJ.]\nHELD: 1. x. [Para 1]\n"
+        "CIVIL APPELLATE JURISDICTION: Civil Appeal No. 1.\n"
+        "The Judgment of the Court was delivered by\n"
+        "A.K.SIKRI, J. - 1. The respondent herein who is trading\n2. Next.\n"
+    )
+    doc = parsed_from_text("2015_6_252_261", Era.C, text)
+    _z, ops = run(doc, settings)
+    assert [o.author for o in ops] == ["A.K.SIKRI, J."]
+    from nyaya.chunk.chunker import find_paragraphs
+
+    paras = find_paragraphs(doc.clean_text, ops[0].char_start, ops[0].char_end)
+    assert [p.label for p in paras] == ["1", "2"]

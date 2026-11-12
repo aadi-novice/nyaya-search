@@ -47,12 +47,19 @@ _D_JUDGMENT = re.compile(r"^[ \t]*Judgment\s*/\s*Order of the Supreme Court[ \t]
 _D_HELD = re.compile(r"^[ \t]*Held\s*:", _F)
 
 # Era C. The bench line may wrap; it is the first "[...J.]" / "[...JJ.]" block.
-_C_BENCH = re.compile(r"\[[^\[\]]{0,300}?(?:J\.|JJ\.|CJI\.?)\s*\]?[ \t]*$", _F)
+# Searched only before the first HELD (and in the first BENCH_WINDOW characters),
+# so a running head "[DEEPAK GUPTA, J.]" deep in the judgment is never taken.
+# "(" and ")" are OCR forms of the brackets in scanned years.
+_C_BENCH = re.compile(r"[\[(][^\[\]()]{0,300}?(?:J\.|JJ\.|CJI\.?)\s*[\])]?[ \t]*$", _F)
+BENCH_WINDOW = 4000
 # Upper case only: catchwords say "On appeal, held:" in lower case.
 _C_HELD = re.compile(r"HELD\s*:")
 _C_CASE_LAW = re.compile(r"^[ \t]*Case Law Reference[ \t]*$", _F)
 _C_JURISDICTION = re.compile(
-    r"^[ \t]*(?:CIVIL|CRIMINAL|ORIGINAL|WRIT|APPELLATE)\b[^\n]*JURISDICTION", _F
+    # Upper case only (a Held line may start "criminal court has no jurisdiction"),
+    # and no \b after the first word: OCR drops spaces ("CIVILAPPELLATEJURISDICTION").
+    r"^[ \t]*(?:CIVIL|CRIMINAL|ORIGINAL|WRIT|APPELLATE)[A-Z \t()/&,.\-]*JURISDICTION",
+    re.MULTILINE,
 )
 # Era C Held point numbers ("1.", "1.1", "2.3"); case-sensitive lookahead.
 # Only at a line start (or straight after "HELD:", checked in _era_c_points): a
@@ -63,9 +70,11 @@ _LINE_START = re.compile(r"(?:^|\n)[ \t]*$")
 # --- paragraph links -------------------------------------------------------------
 
 # Design regex, plus an optional stray margin letter before the numbers
-# ("[Para C 10)") and margin letters inside the list.
+# ("[Para C 10)"), margin letters inside the list, "to" ranges ("[Paras 11 to
+# 15)") and "(" for "[" (OCR in scanned years: "(Paras 5, 6]").
 _PARA_LINK = re.compile(
-    r"\[\s*Paras?\s+(?:[A-H]\s+)?([0-9][0-9.,&\s\-\u2013andA-H]*?)\s*[\])]", re.IGNORECASE
+    r"[\[(]\s*Paras?\s+(?:[A-H]\s+)?([0-9][0-9.,&\s\-\u2013andtoA-H]*?)\s*[\])]",
+    re.IGNORECASE,
 )
 # Page-and-line pinpoints after a link: "[34-C-D]", "(67-G-H; 68-\nA-B]".
 _PINPOINT_RUN = re.compile(r"(?:\s*[\[(]\s*\d[^\[\]()]{0,40}[\])])+")
@@ -77,6 +86,7 @@ def parse_para_list(inner: str) -> list[str]:
     """Paragraph labels from the text inside a "[Para ...]" link."""
     inner = re.sub(r"(?<![A-Za-z])[A-H](?![A-Za-z])", " ", inner)
     labels: list[str] = []
+    inner = re.sub(r"\bto\b", "-", inner)
     for part in re.split(r",|&|\band\b", inner):
         part = part.strip()
         if not part:
@@ -118,15 +128,18 @@ def para_refs(text: str) -> list[str]:
 
 # The design regex, plus "Code of Criminal/Civil Procedure" (whose name does not
 # end in a keyword) and word boundaries around the keyword ("contract, 1990").
-_NAME = r"[A-Z][A-Za-z().&'\u2019\- ]{2,120}?"
+_NAME_CHARS = r"[A-Za-z().&'\u2019\- ]"
+_NAME = rf"[A-Z]{_NAME_CHARS}{{2,120}}?"
 _ACT_RE = re.compile(
     r"(?:The\s+)?("
     rf"(?:{_NAME}\s)?Code\s+of\s+(?:Criminal|Civil)\s+Procedure"
     rf"|{_NAME}\b(?:Act|Code|Rules|Regulations|Ordinance|Order|Adhiniyam|Sanhita)"
-    r")\s*[,;]\s*(\d{4})\b",
+    r")\s*[,;.]\s*(\d{4})\b",  # "." and ";" are OCR forms of the comma
     re.IGNORECASE,
 )
-_DASHES = re.compile(r"\s*[-\u2013\u2014]\s*")
+# En and em dashes always; an ASCII hyphen only next to a space ("1988 - s.3",
+# "(appeal)- Tribunal"), so "Co-operative" stays one word.
+_DASHES = re.compile(r"\s*[\u2013\u2014]\s*|\s+-\s*|\s*-\s+")
 _LONE_MARGIN = re.compile(r"(?<=\s)[A-H](?=\s)")
 
 
@@ -231,10 +244,23 @@ def _no_year_patterns(settings: Settings) -> list[tuple[re.Pattern[str], str]]:
     return out
 
 
+def _with_bracket_prefix(group: str, start: int, name: str) -> str:
+    """Extend a name that closes a bracket opened before it, across commas:
+    "Hazardous Wastes (Management, Handling ...) Rules"."""
+    if name.count(")") <= name.count("("):
+        return name.strip()
+    prefix = group[:start]
+    idx = prefix.rfind("(")
+    if idx < 0 or ")" in prefix[idx:]:
+        return name.strip()
+    lead = re.search(_NAME_CHARS + r"*$", prefix[:idx])
+    return (prefix[lead.start() if lead else idx :] + name).strip()
+
+
 def _group_acts(group: str, settings: Settings) -> list[tuple[int, str]]:
     found: list[tuple[int, str]] = []
     for m in _ACT_RE.finditer(group):
-        name = _trim_leading_lower(m.group(1).strip())
+        name = _trim_leading_lower(_with_bracket_prefix(group, m.start(1), m.group(1)))
         if name and name.lower() not in {"act", "code", "rules", "order"}:
             found.append((m.start(1), f"{name}, {m.group(2)}"))
     taken = [(m.start(), m.end()) for m in _ACT_RE.finditer(group)]
@@ -351,7 +377,9 @@ def _era_c_points(text: str, start: int, end: int) -> list[HeldPoint]:
 def _zone_era_c(text: str, settings: Settings, aliases: Mapping[str, str]) -> Zones:
     n = len(text)
     missing: list[Zone] = []
-    bench = _first(_C_BENCH, text)
+    first_held = _C_HELD.search(text)
+    limit = min(BENCH_WINDOW, first_held.start() if first_held else len(text))
+    bench = _C_BENCH.search(text, 0, limit)
     if bench:
         header_span = (0, bench.end())
         ed_start = _line_end(text, bench.end())

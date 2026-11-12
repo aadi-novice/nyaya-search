@@ -147,3 +147,33 @@ def test_era_c_editorial_missing_when_no_text(settings):
 def test_zone_default_settings():
     z = zone(load(ERA_C))
     assert len(z.editorial) == 3
+
+
+def test_era_c_ocr_bench_in_brackets_and_running_head_not_bench(settings):
+    text = (
+        "[2017] I S.C.R. 401\nA v. B\n(Writ Petition (C) No. 573 of2003)\n"
+        "(T.S. THAKUR, CJI, A.M. KHANWILKAR AND,\nDR. D.Y. CHANDRACHUD, JJ.)\n"
+        "Penal Code, 1860 – s.302.\nHELD: 1. A point. (Paras 5, 6] (404-D-GJ\n"
+        "CIVILAPPELLATEJURISDICTION: Civil Appeal No.\n709 of2005.\n"
+        "The Judgment of the Court was delivered by\n"
+        "DR. D. Y. CHANDRACHUD, J. I. Prior to the establishment\n"
+        "[DR. D.Y. CHANDRACHUD, J.]\n2. Next.\n"
+    )
+    doc = parsed_from_text("2017_1_401_405", Era.C, text)
+    z = zone(doc, settings)
+    assert span_text(doc, z.header_span).endswith("DR. D.Y. CHANDRACHUD, JJ.)")
+    assert span_text(doc, z.judgment_span).startswith("CIVILAPPELLATEJURISDICTION")
+    assert Zone.JUDGMENT not in z.missing and Zone.HEADER not in z.missing
+    assert [hp.para_refs for hp in z.editorial] == [["5", "6"]]
+
+
+def test_era_c_lower_case_jurisdiction_line_in_held_is_not_the_judgment(settings):
+    text = (
+        "A v. B\n[X, J.]\nPenal Code, 1860 – s.302.\n"
+        "HELD: 1. The point is made here and the\ncriminal court had no jurisdiction. [Para 3]\n"
+        "CRIMINAL APPELLATE JURISDICTION: Criminal Appeal No. 1.\nX, J. 1. T.\n"
+    )
+    doc = parsed_from_text("2011_1_1_2", Era.C, text)
+    z = zone(doc, settings)
+    assert span_text(doc, z.judgment_span).startswith("CRIMINAL APPELLATE JURISDICTION")
+    assert z.editorial[0].para_refs == ["3"]

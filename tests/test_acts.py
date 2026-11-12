@@ -248,3 +248,25 @@ def test_act_refs_and_unmapped(aliases):
     assert unmapped_act_names([*names, "Bombay Police Act, 1951"], aliases) == {
         "bombay police act, 1951": 2
     }
+
+
+def test_hyphenated_word_is_not_split(settings):
+    text = "Co-operative Societies: Maharashtra Co-operative Societies Act, 1960 - ss. 91 and 163."
+    assert acts(text, settings) == ["Maharashtra Co-operative Societies Act, 1960"]
+
+
+def test_bracket_with_comma_inside_name(settings):
+    text = (
+        "Environment – Hazardous Wastes (Management, Handling and Transboundary Movement) "
+        "Rules, 2008 – r.3 – validity."
+    )
+    assert acts(text, settings) == [
+        "Hazardous Wastes (Management, Handling and Transboundary Movement) Rules, 2008"
+    ]
+
+
+def test_ocr_full_stop_before_year(settings):
+    text = "Recovery of Debts Due to Banks and Financial Institutions\nAct. 1993- Enforcement."
+    assert acts(text, settings) == [
+        "Recovery of Debts Due to Banks and Financial Institutions Act, 1993"
+    ]

@@ -27,7 +27,9 @@ from nyaya.zone.zoner import _C_BENCH, default_settings
 
 _START = re.compile(
     r"^[ \t]*([A-Z][A-Za-z. \t]{2,60}?),[ \t]*(CJI|C\.J|J)(\.?)[ \t]*:?"
-    r"(?=[ \t]*$|[ \t]+(?:\d{1,3}|I)\.\s)",  # "I." is OCR for "1." in scanned years
+    # then the line end, or the first paragraph, after an optional dash
+    # ("A.K. SIKRI, J. - 1. ..."); "I." is OCR for "1." in scanned years
+    r"(?=[ \t]*$|[ \t]+(?:[-\u2013\u2014][ \t]+)?(?:\d{1,3}|I)\.\s)",
     re.MULTILINE,
 )
 _NUMBERED_LINE = re.compile(r"^[ \t]*\d{1,3}(?:\.\d{1,2})?\.\s", re.MULTILINE)
