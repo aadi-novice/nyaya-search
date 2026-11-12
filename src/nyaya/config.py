@@ -111,7 +111,7 @@ class EraB(_Section):
     right_x: tuple[float, float]
     ocr_letters: list[str]
     column_gap: float
-    column_window: float
+    max_skew: float
     min_column_lines: int
     top_y: tuple[float, float]
     bottom_y: tuple[float, float]

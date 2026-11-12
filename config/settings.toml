@@ -82,17 +82,17 @@ year_to = 2009
 # Margin letters: a short token (a letter A-H or one of `ocr_letters`, or
 # punctuation only) inside one of these bands and outside the body column by
 # at least `column_gap`. The column is measured on the page's text lines of 4+
-# words, near the token's height (within `column_window`; the scans are
-# skewed) and over the whole page, and the wider edge is used; with fewer
-# than `min_column_lines` lines a letter must stand MIN_MARGIN_GAP points
-# clear of other words instead. The bands are wide because the column
-# decides: some 1970-1985 PDFs place the scanned page in the middle of a
-# letter-size sheet.
+# words, after removing the scan's skew (the drift of the letter columns down
+# the page, at most `max_skew` of the width per page height; 0.035 is
+# typical); with fewer than `min_column_lines` lines a letter must stand
+# MIN_MARGIN_GAP points clear of other words instead. The bands are wide
+# because the column decides: some 1970-1985 PDFs place the scanned page in
+# the middle of a letter-size sheet.
 left_x = [-0.05, 0.35]
 right_x = [0.65, 1.05]
 ocr_letters = ["c", "o", "O", "0", "8", "e", "I", "l", "1", "J", "i", "r", "t", "f"]
 column_gap = 0.008
-column_window = 0.15
+max_skew = 0.1
 min_column_lines = 5
 # Running heads: "938 SUPREME COURT REPORTS [1985] 2 S.C.R." on even pages,
 # "STATE OF KERALA v. A. LAKSHMIKUTTY [SEN, J.] 143" on odd pages. One of the

@@ -38,6 +38,7 @@ page is the SCR start page in `path` plus the PDF page index.
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -516,28 +517,61 @@ def _quantile(sorted_vals: Sequence[float], q: float) -> float:
     return sorted_vals[min(len(sorted_vals) - 1, max(0, round(q * (len(sorted_vals) - 1))))]
 
 
+def page_skew(pw: PageWords, cfg: EraB) -> float:
+    """How far the margin-letter columns drift across the page per unit of
+    page height (x and y as page fractions), 0 when there are too few letters.
+
+    Scans are often rotated a little, so the body column and the letter
+    columns lean together (the left edge moving from 0.088 to 0.060 of the
+    width down one 1979 page). The drift is the median slope between pairs of
+    lone letters A-H on the same side, at least a tenth of the page apart,
+    capped at `cfg.max_skew`. Body words such as "A" at a line start are not
+    lone (they have a neighbour within MIN_MARGIN_GAP points) and so do not
+    count.
+    """
+    sides: dict[str, list[tuple[float, float]]] = {"left": [], "right": []}
+    for w in pw.words:
+        if w.text not in MARGIN_LETTERS or neighbour_gap(w, pw.words) < MIN_MARGIN_GAP:
+            continue
+        fx0, fx1 = w.x0 / pw.width, w.x1 / pw.width
+        side = (
+            "left"
+            if in_band(cfg.left_x, fx0, fx1)
+            else "right"
+            if in_band(cfg.right_x, fx0, fx1)
+            else None
+        )
+        if side:
+            sides[side].append(((w.y0 + w.y1) / 2 / pw.height, (fx0 + fx1) / 2))
+    slopes = sorted(
+        (x2 - x1) / (y2 - y1)
+        for pts in sides.values()
+        for (y1, x1), (y2, x2) in itertools.combinations(pts, 2)
+        if abs(y2 - y1) >= 0.1
+    )
+    if len(slopes) < 3:
+        return 0.0
+    return max(-cfg.max_skew, min(cfg.max_skew, slopes[len(slopes) // 2]))
+
+
 def column_edges(
-    lines: Sequence[ColumnLine], yc: float, window: float, min_lines: int
+    lines: Sequence[ColumnLine], yc: float, skew: float, min_lines: int
 ) -> Band | None:
-    """(left, right) edge of the body column near height `yc`, or None.
+    """(left, right) edge of the body column at height `yc`, or None.
 
     An edge is the 10th percentile of the line starts (90th of the line
-    ends), so indented first lines and short last lines lie inside it. It is
-    measured over the lines within `window` of `yc` (a skewed scan moves the
-    column across the page) and over the whole page, and the wider of the two
-    is used: where block quotations fill the window, the local edge is the
-    quotation's, and a list marker such as "(c)" at the true edge would look
-    like a margin letter. Fewer than `min_lines` lines on the page: None.
+    ends), so indented first lines and short last lines lie inside it, taken
+    over the whole page after removing the drift `skew` (page_skew), then
+    moved to height `yc`. Taking it over the page, not near `yc`, keeps a
+    page part filled with block quotations from moving the edge to the
+    quotation's indent, where a list marker such as "(c)" at the true edge
+    would look like a margin letter. Fewer than `min_lines` lines: None.
     """
     if len(lines) < min_lines:
         return None
-    left = _quantile(sorted(c.x0 for c in lines), 0.1)
-    right = _quantile(sorted(c.x1 for c in lines), 0.9)
-    near = [c for c in lines if abs(c.yc - yc) <= window]
-    if len(near) >= min_lines:
-        left = min(left, _quantile(sorted(c.x0 for c in near), 0.1))
-        right = max(right, _quantile(sorted(c.x1 for c in near), 0.9))
-    return left, right
+    left = _quantile(sorted(c.x0 - skew * c.yc for c in lines), 0.1)
+    right = _quantile(sorted(c.x1 - skew * c.yc for c in lines), 0.9)
+    return left + skew * yc, right + skew * yc
 
 
 def era_b_margin_ids(pw: PageWords, cfg: EraB) -> set[int]:
@@ -554,6 +588,7 @@ def era_b_margin_ids(pw: PageWords, cfg: EraB) -> set[int]:
     """
     letters = MARGIN_LETTERS | frozenset(cfg.ocr_letters)
     lines = column_lines(pw, letters)
+    skew = page_skew(pw, cfg)
     out: set[int] = set()
     for w in pw.words:
         if not is_margin_token(w.text, letters):
@@ -562,7 +597,7 @@ def era_b_margin_ids(pw: PageWords, cfg: EraB) -> set[int]:
         if not (in_band(cfg.left_x, fx0, fx1) or in_band(cfg.right_x, fx0, fx1)):
             continue
         yc = (w.y0 + w.y1) / 2 / pw.height
-        edges = column_edges(lines, yc, cfg.column_window, cfg.min_column_lines)
+        edges = column_edges(lines, yc, skew, cfg.min_column_lines)
         if edges is None:
             if _alnum(w.text) and neighbour_gap(w, pw.words) >= MIN_MARGIN_GAP:
                 out.add(id(w))
