@@ -18,5 +18,29 @@ services:
       timeout: 5s
       retries: 20
 
+  # The API on the CPU, next to the database. Not started by `docker compose up -d db`;
+  # start it with `docker compose --profile api up -d --build`. The index must
+  # already be built and active (nyaya-build). Model weights download into the
+  # hf_cache volume on the first start.
+  api:
+    profiles: ["api"]
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://nyaya:nyaya@db:5432/nyaya
+      NYAYA_DEVICE: cpu
+      HF_HOME: /hf-cache
+    ports:
+      - "127.0.0.1:8000:8000"
+    mem_limit: 6g
+    volumes:
+      - hf_cache:/hf-cache
+
 volumes:
   nyaya_pgdata:
+  hf_cache:

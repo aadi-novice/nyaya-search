@@ -32,6 +32,8 @@ def test_export_json_schema_writes_file(tmp_path):
         "UnverifiedSentence",
         "AskRequest",
         "AskResponse",
+        "SearchPassage",
+        "SearchResponse",
         "Filters",
         "Versions",
         "SearchHit",
@@ -42,7 +44,7 @@ def test_export_json_schema_writes_file(tmp_path):
 @pytest.mark.parametrize(
     ("enum", "values"),
     [
-        (c.Era, {"c", "d", "out_of_scope"}),
+        (c.Era, {"b", "c", "d", "out_of_scope"}),
         (c.Zone, {"header", "issue", "editorial", "references", "judgment"}),
         (c.OpinionType, {"majority", "concurring", "dissenting", "unknown"}),
         (c.Route, {"citation_lookup", "hybrid"}),

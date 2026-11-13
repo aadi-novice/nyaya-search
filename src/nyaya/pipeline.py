@@ -13,16 +13,25 @@ route, with the question unchanged. No candidates under active filters gives
 Any unexpected exception gives `error`. Every stage is timed, and one trace
 row is written per request; a trace failure never fails the request.
 
+`search(request, deps) -> SearchResponse` runs the same route and the same
+retrieval (`_retrieve`: search, fusion, expansion, rerank) and stops before the
+LLM, so the page can show the passages before the written answer. It writes no
+trace: the /ask that follows is traced. When `deps.retrieval_cache` is set,
+`search` stores its ranked passages there and the next `ask` with the same
+question, filters and index version reuses them instead of searching again.
+
 Search, encoders, routing, fusion and expansion are built elsewhere and reach
 this module only through `Deps`, so tests use fakes.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -43,6 +52,8 @@ from nyaya.contracts import (
     PassageRef,
     Route,
     SearchHit,
+    SearchPassage,
+    SearchResponse,
     Status,
     Versions,
     Zone,
@@ -119,6 +130,8 @@ class Deps:
     # opens a fresh database connection (the API's error traces use it)
     connect: Callable[[], Any] | None = None
     models_loaded: bool = True
+    # filled by `search`, read by `ask` (None: no cache, every request retrieves)
+    retrieval_cache: RetrievalCache | None = None
 
     def versions(self) -> Versions:
         """The versions of this deployment (no reranker fallback assumed)."""
@@ -169,8 +182,9 @@ class _Run:
         finally:
             self.timings[stage] = round((self.deps.clock() - t0) * 1000, 3)
 
-    def respond(self, status: Status, **fields: Any) -> AskResponse:
-        deps, s = self.deps, self.deps.settings
+    def _envelope(self, status: Status) -> dict[str, Any]:
+        """The fields AskResponse and SearchResponse share."""
+        deps = self.deps
         self.timings["total"] = round((deps.clock() - self.started_at) * 1000, 3)
         versions = deps.versions().model_copy(
             update={
@@ -178,18 +192,23 @@ class _Run:
                 "reranker_fallback_used": self.fallback_used,
             }
         )
-        response = AskResponse(
-            request_id=self.request_id,
-            status=status,
-            notices=notices(s),
-            route=self.route,
-            filters_applied=_filters_applied(self.request.filters),
-            versions=versions,
-            timings_ms=dict(self.timings),
-            **fields,
-        )
+        return {
+            "request_id": self.request_id,
+            "status": status,
+            "notices": notices(deps.settings),
+            "route": self.route,
+            "filters_applied": _filters_applied(self.request.filters),
+            "versions": versions,
+            "timings_ms": dict(self.timings),
+        }
+
+    def respond(self, status: Status, **fields: Any) -> AskResponse:
+        response = AskResponse(**self._envelope(status), **fields)
         self._write_trace(response)
         return response
+
+    def respond_search(self, status: Status, **fields: Any) -> SearchResponse:
+        return SearchResponse(**self._envelope(status), **fields)
 
     def _write_trace(self, response: AskResponse) -> None:
         t = self.trace
@@ -236,12 +255,32 @@ def _passage_ref(chunk: ChunkRecord, judgment: JudgmentRecord | None) -> Passage
     )
 
 
-def _passages(engine: SearchEngine, chunks: Sequence[ChunkRecord]) -> list[Passage]:
+def _judgments(
+    engine: SearchEngine, chunks: Sequence[ChunkRecord]
+) -> dict[str, JudgmentRecord | None]:
     judgments: dict[str, JudgmentRecord | None] = {}
     for c in chunks:
         if c.judgment_id not in judgments:
             judgments[c.judgment_id] = engine.get_judgment(c.judgment_id)
-    return [Passage(ref=_passage_ref(c, judgments[c.judgment_id]), chunk=c) for c in chunks]
+    return judgments
+
+
+def _passages(
+    chunks: Sequence[ChunkRecord], judgments: Mapping[str, JudgmentRecord | None]
+) -> list[Passage]:
+    return [Passage(ref=_passage_ref(c, judgments.get(c.judgment_id)), chunk=c) for c in chunks]
+
+
+def _search_passage(
+    rank: int, chunk: ChunkRecord, judgment: JudgmentRecord | None, score: float | None
+) -> SearchPassage:
+    return SearchPassage(
+        **_passage_ref(chunk, judgment).model_dump(),
+        rank=rank,
+        rerank_score=score,
+        text=chunk.text,
+        decision_date=judgment.decision_date if judgment else None,
+    )
 
 
 # --- citation lookup -------------------------------------------------------------
@@ -260,7 +299,8 @@ def lookup_chunks(
     return [c for c in chunks if c.zone is Zone.JUDGMENT][:1]
 
 
-def _lookup(run: _Run) -> AskResponse | None:
+def _lookup_chunks(run: _Run) -> tuple[JudgmentRecord | None, list[ChunkRecord]] | None:
+    """The cited judgment and its lookup chunks; None if no citation resolves."""
     deps = run.deps
     with run.timed("lookup"):
         path = None
@@ -277,9 +317,26 @@ def _lookup(run: _Run) -> AskResponse | None:
             deps.engine.chunks_for_judgment(path),
             deps.settings.retrieval.lookup_max_editorial,
         )
-        refs = [_passage_ref(c, judgment) for c in chunks]
-    run.trace["retrieved"] = [{"chunk_id": r.chunk_id} for r in refs]
+    run.trace["retrieved"] = [{"chunk_id": c.chunk_id} for c in chunks]
+    return judgment, chunks
+
+
+def _lookup(run: _Run) -> AskResponse | None:
+    found = _lookup_chunks(run)
+    if found is None:
+        return None
+    judgment, chunks = found
+    refs = [_passage_ref(c, judgment) for c in chunks]
     return run.respond(Status.PASSAGES, passages=refs, passages_note=NOTE_LOOKUP)
+
+
+def _search_lookup(run: _Run) -> SearchResponse | None:
+    found = _lookup_chunks(run)
+    if found is None:
+        return None
+    judgment, chunks = found
+    passages = [_search_passage(i, c, judgment, None) for i, c in enumerate(chunks, 1)]
+    return run.respond_search(Status.PASSAGES, passages=passages, passages_note=NOTE_LOOKUP)
 
 
 # --- hybrid ---------------------------------------------------------------------
@@ -306,9 +363,81 @@ def _rerank(run: _Run, question: str, chunks: Sequence[ChunkRecord]) -> list[flo
     return [float(x) for x in scores]
 
 
-def _hybrid(run: _Run) -> AskResponse:
-    deps, s = run.deps, run.deps.settings
-    r = s.retrieval
+@dataclass(frozen=True)
+class _Retrieved:
+    """The hybrid route's ranked passages: what /ask answers from and /search shows.
+
+    `ranked` holds (rerank score, hit, chunk), best first, at most `final_k`.
+    `candidates` is False when keyword and vector search both returned nothing.
+    """
+
+    candidates: bool
+    ranked: tuple[tuple[float, SearchHit, ChunkRecord], ...] = ()
+    judgments: Mapping[str, JudgmentRecord | None] = field(default_factory=dict)
+    rows_returned: dict[str, Any] = field(default_factory=dict)
+    retrieved: tuple[dict[str, Any], ...] = ()
+    reranker_model: str = ""
+    fallback_used: bool = False
+
+    @property
+    def chunks(self) -> list[ChunkRecord]:
+        return [c for _, _, c in self.ranked]
+
+
+CacheKey = tuple[str, str, str]
+
+
+class RetrievalCache:
+    """A small time-limited cache of retrieval results.
+
+    `search` fills it; `ask` reads it, so the /ask the page sends right after a
+    /search for the same question, filters and index version does not search
+    and rerank a second time. Thread-safe; entries live `ttl_s` seconds.
+    """
+
+    def __init__(
+        self,
+        max_entries: int = 64,
+        ttl_s: float = 300.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._max = max_entries
+        self._ttl = ttl_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._items: OrderedDict[CacheKey, tuple[float, _Retrieved]] = OrderedDict()
+
+    @staticmethod
+    def key(index_version: str, request: AskRequest) -> CacheKey:
+        filters = json.dumps(_filters_applied(request.filters), sort_keys=True)
+        return (index_version, " ".join(request.question.split()), filters)
+
+    def get(self, key: CacheKey) -> _Retrieved | None:
+        with self._lock:
+            item = self._items.get(key)
+            if item is None:
+                return None
+            stored_at, value = item
+            if self._clock() - stored_at > self._ttl:
+                del self._items[key]
+                return None
+            return value
+
+    def put(self, key: CacheKey, value: _Retrieved) -> None:
+        with self._lock:
+            self._items[key] = (self._clock(), value)
+            self._items.move_to_end(key)
+            while len(self._items) > self._max:
+                self._items.popitem(last=False)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._items)
+
+
+def _search_and_rerank(run: _Run) -> _Retrieved:
+    """keyword + vector -> RRF -> link expansion -> fetch -> rerank -> top `final_k`."""
+    deps, r = run.deps, run.deps.settings.retrieval
     question, filters = run.request.question, run.request.filters
 
     with run.timed("embed"):
@@ -317,14 +446,12 @@ def _hybrid(run: _Run) -> AskResponse:
         kw = deps.engine.keyword(question, filters, r.keyword_k)
     with run.timed("vector"):
         vec = deps.engine.vector(qvec, filters, r.vector_k, False)
-    run.trace["rows_returned"] = {
+    rows_returned = {
         "keyword": {"requested": r.keyword_k, "returned": len(kw)},
         "vector": {"requested": r.vector_k, "returned": len(vec)},
     }
     if not kw and not vec:
-        if _filters_applied(filters):
-            return run.respond(Status.NO_MATCH_WITH_FILTERS)
-        return run.respond(Status.REFUSED)
+        return _Retrieved(candidates=False, rows_returned=rows_returned)
 
     with run.timed("fusion"):
         fused = deps.rrf([kw, vec], r.rrf_k)
@@ -338,8 +465,9 @@ def _hybrid(run: _Run) -> AskResponse:
     with run.timed("rerank"):
         scores = _rerank(run, question, chunks)
     ranked = sorted(zip(scores, hits, chunks, strict=True), key=lambda t: -t[0])[: r.final_k]
-    top_chunks = [c for _, _, c in ranked]
-    run.trace["retrieved"] = [
+    with run.timed("fetch_judgments"):
+        judgments = _judgments(deps.engine, [c for _, _, c in ranked])
+    retrieved = tuple(
         {
             "chunk_id": h.chunk_id,
             "keyword_rank": h.keyword_rank,
@@ -348,15 +476,58 @@ def _hybrid(run: _Run) -> AskResponse:
             "rerank_score": score,
         }
         for score, h, _ in ranked
-    ]
-    with run.timed("fetch_judgments"):
-        passages = _passages(deps.engine, top_chunks)
-    refs = [p.ref for p in passages]
-    if not ranked:
-        return run.respond(Status.REFUSED)
+    )
+    return _Retrieved(
+        candidates=True,
+        ranked=tuple(ranked),
+        judgments=judgments,
+        rows_returned=rows_returned,
+        retrieved=retrieved,
+        reranker_model=run.reranker_model,
+        fallback_used=run.fallback_used,
+    )
 
-    threshold = deps.threshold_fallback if run.fallback_used else deps.threshold_primary
-    top_score = ranked[0][0]
+
+def _retrieve(run: _Run, *, fill_cache: bool) -> _Retrieved:
+    """The hybrid retrieval shared by `ask` (reads the cache) and `search` (fills it)."""
+    cache = run.deps.retrieval_cache
+    key = RetrievalCache.key(run.deps.index_version, run.request)
+    found = None
+    if cache is not None and not fill_cache:
+        with run.timed("retrieval_cache"):
+            found = cache.get(key)
+    if found is None:
+        found = _search_and_rerank(run)
+        if cache is not None and fill_cache:
+            cache.put(key, found)
+    else:
+        run.reranker_model = found.reranker_model
+        run.fallback_used = found.fallback_used
+    run.trace["rows_returned"] = found.rows_returned
+    run.trace["retrieved"] = list(found.retrieved)
+    return found
+
+
+def _threshold(run: _Run) -> float:
+    deps = run.deps
+    return deps.threshold_fallback if run.fallback_used else deps.threshold_primary
+
+
+def _hybrid(run: _Run) -> AskResponse:
+    deps, s = run.deps, run.deps.settings
+    question = run.request.question
+    got = _retrieve(run, fill_cache=False)
+    if not got.candidates:
+        if _filters_applied(run.request.filters):
+            return run.respond(Status.NO_MATCH_WITH_FILTERS)
+        return run.respond(Status.REFUSED)
+    if not got.ranked:
+        return run.respond(Status.REFUSED)
+    passages = _passages(got.chunks, got.judgments)
+    refs = [p.ref for p in passages]
+
+    threshold = _threshold(run)
+    top_score = got.ranked[0][0]
     run.trace.update(top_score=top_score, threshold=threshold)
     if top_score < threshold:
         return run.respond(Status.REFUSED, nearest_passages=refs)
@@ -375,7 +546,7 @@ def _hybrid(run: _Run) -> AskResponse:
             note = NOTE_LLM_INVALID if isinstance(exc, LLMBadJSON) else NOTE_LLM_UNAVAILABLE
             return run.respond(Status.PASSAGES, passages=refs, passages_note=note)
     with run.timed("check"):
-        chunk_map: Mapping[str, ChunkRecord] = {c.chunk_id: c for c in top_chunks}
+        chunk_map: Mapping[str, ChunkRecord] = {c.chunk_id: c for c in got.chunks}
         verified, unverified, gaps, breaks = check(
             result.output,
             label_map,
@@ -388,6 +559,22 @@ def _hybrid(run: _Run) -> AskResponse:
     if not verified:
         return run.respond(Status.REFUSED, unverified=unverified, gaps=gaps, nearest_passages=refs)
     return run.respond(Status.ANSWERED, answer=verified, unverified=unverified, gaps=gaps)
+
+
+def _search_hybrid(run: _Run) -> SearchResponse:
+    got = _retrieve(run, fill_cache=True)
+    if not got.candidates:
+        if _filters_applied(run.request.filters):
+            return run.respond_search(Status.NO_MATCH_WITH_FILTERS)
+        return run.respond_search(Status.REFUSED)
+    passages = [
+        _search_passage(i, chunk, got.judgments.get(chunk.judgment_id), score)
+        for i, (score, _hit, chunk) in enumerate(got.ranked, 1)
+    ]
+    threshold = _threshold(run)
+    top = got.ranked[0][0] if got.ranked else None
+    status = Status.PASSAGES if top is not None and top >= threshold else Status.REFUSED
+    return run.respond_search(status, passages=passages, top_score=top, threshold=threshold)
 
 
 # --- entry points ---------------------------------------------------------------
@@ -424,6 +611,41 @@ def ask(
         log.exception("request %s failed", run.request_id)
         run.trace["error"] = f"{type(exc).__name__}: {exc}"
         return run.respond(Status.ERROR, passages_note=NOTE_ERROR)
+
+
+def search(
+    request: AskRequest,
+    deps: Deps,
+    *,
+    request_id: str | None = None,
+) -> SearchResponse:
+    """The ranked passages for one request: `ask`'s route and retrieval, no LLM.
+
+    Status: `passages` for a citation lookup, or when the top rerank score
+    reaches the refusal threshold; `refused` when it does not (the passages are
+    then the nearest ones) or when there are no candidates without filters;
+    `no_match_with_filters`; `error`. No trace is written.
+    """
+    run = _Run(
+        request=request,
+        deps=deps,
+        request_id=request_id or deps.new_request_id(),
+        started_at=deps.clock(),
+    )
+    try:
+        with run.timed("route"):
+            run.route = deps.route(request.question)
+        if run.route is Route.CITATION_LOOKUP:
+            response = _search_lookup(run)
+            if response is not None:
+                return response
+            run.route = Route.HYBRID
+        return _search_hybrid(run)
+    except InvalidFilter as exc:
+        return run.respond_search(Status.ERROR, passages_note=f"{NOTE_INVALID_FILTER}: {exc}")
+    except Exception:
+        log.exception("search %s failed", run.request_id)
+        return run.respond_search(Status.ERROR, passages_note=NOTE_ERROR)
 
 
 def error_response(
@@ -555,11 +777,12 @@ def build_deps(settings: Settings) -> Deps:  # pragma: no cover - needs the GPU 
         )
 
     gpu = threading.Lock()
-    embedder = Embedder(settings)
-    startup_check(settings, embedder)
+    device = settings.secrets.nyaya_device  # NYAYA_DEVICE: "cuda" (default) or "cpu"
+    embedder = Embedder(settings, device=device)
+    startup_check(settings, embedder, require_cuda=device == "cuda")
     models_loaded = True
     try:
-        reranker: Any = _ScoreReranker(QwenReranker(settings), gpu)
+        reranker: Any = _ScoreReranker(QwenReranker(settings, device=device), gpu)
     except Exception as exc:
         log.exception("local reranker failed to load; the fallback will be used")
         reranker = _UnavailableReranker(settings.rerank.model, f"{type(exc).__name__}: {exc}")

@@ -288,7 +288,7 @@ class DocProcessor:
         from nyaya.chunk.chunker import chunk
         from nyaya.chunk.metrics import doc_metrics
         from nyaya.link.linker import resolve_held_links
-        from nyaya.parse.eras import classify_pdf
+        from nyaya.parse.eras import classify_pdf, out_of_scope_reason_pdf
         from nyaya.parse.pdf_layout import parse
         from nyaya.text.normalize import normalize_text
         from nyaya.zone.opinions import split_opinions
@@ -300,7 +300,9 @@ class DocProcessor:
         res.era = era.value
         res.judgment["era"] = era.value
         if era is Era.OUT_OF_SCOPE:
-            res.skipped.append((res.path, "parse", "era_out_of_scope", ""))
+            year = int(row["decision_year"])
+            detail = out_of_scope_reason_pdf(data, year, s.era_markers)
+            res.skipped.append((res.path, "parse", "era_out_of_scope", detail))
             return "parse"
 
         parsed = parse(data, res.path, era, s)

@@ -1,0 +1,19 @@
+# Only what the API image needs: pyproject.toml, uv.lock, README.md, src/,
+# config/, prompts/, web/, contracts/. Never the data, the build or secrets.
+.git
+.github
+.venv
+.env
+.env.*
+!.env.example
+build/
+docs/
+eval/
+tests/
+scripts/
+db/
+obsidian-vault/
+**/__pycache__
+*.pyc
+.coverage
+*.parquet

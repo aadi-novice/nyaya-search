@@ -90,6 +90,9 @@ class LLMClient:
         self.reasoning_effort = reasoning_effort
         self.max_output_tokens = max_output_tokens
         self.json_mode = json_mode
+        # token counts of the last reply (None if the provider sent none); the
+        # evaluation harness reads them to record tokens used per run
+        self.last_usage: dict[str, int] | None = None
         # max_retries=0: the time budget is ours to manage, not the SDK's.
         self._client = client or openai.OpenAI(base_url=base_url, api_key=api_key, max_retries=0)
 
@@ -140,10 +143,12 @@ class LLMClient:
             kwargs["response_format"] = {"type": "json_object"}
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
+        self.last_usage = None
         try:
             response = self._client.chat.completions.create(**kwargs)
         except (openai.OpenAIError, httpx.HTTPError) as exc:
             raise LLMUnavailable(f"{type(exc).__name__}: {exc}") from exc
+        self.last_usage = usage_dict(getattr(response, "usage", None))
         if not response.choices:
             raise LLMBadJSON("empty reply (no choices)")
         choice = response.choices[0]
@@ -159,6 +164,18 @@ class LLMClient:
                     raw,
                 ) from None
             raise
+
+
+def usage_dict(usage: Any) -> dict[str, int] | None:
+    """`prompt_tokens`, `completion_tokens` and `total_tokens` from a reply's usage."""
+    if usage is None:
+        return None
+    out = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if isinstance(value, int):
+            out[key] = value
+    return out or None
 
 
 def validate_answer_shape(obj: dict[str, Any]) -> dict[str, Any]:

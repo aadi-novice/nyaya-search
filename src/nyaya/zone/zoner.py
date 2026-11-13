@@ -1,12 +1,13 @@
 """Split a ParsedDoc into zones (design, Technical Plan step 4; file 20).
 
 `zone(parsed) -> Zones` finds the header, issue, editorial, references and
-judgment zones with line-anchored patterns for each era, splits the editorial
+judgment zones with line-anchored patterns for each era (Era B: the Era C
+patterns with OCR tolerance, see `_zone_era_b`), splits the editorial
 zone into Held points with their "[Para N]" links, and collects Acts and
 keywords:
 
 *   Era D: the "List of Acts" and "List of Keywords" entries.
-*   Era C (author decision E1): every Act named in the catchwords, the
+*   Eras B and C (author decision E1): every Act named in the catchwords, the
     editorial text before "HELD:".
 
 `Zones.acts` holds Act names as printed, one per canonical name; use
@@ -295,10 +296,13 @@ def extract_era_c_acts(
     settings: Settings | None = None,
     aliases: Mapping[str, str] | None = None,
     unmatched: list[str] | None = None,
+    clean: Callable[[str], str] | None = None,
 ) -> list[str]:
     """Every Act named in Era C catchword text, as printed, one per canonical name.
 
-    Groups with no Act are appended to `unmatched` when it is given.
+    Groups with no Act are appended to `unmatched` when it is given. `clean`
+    (Era B: `title_run`) rewrites each name before it is deduplicated; names
+    it empties are dropped.
     """
     settings = settings or default_settings()
     if aliases is None:
@@ -310,11 +314,49 @@ def extract_era_c_acts(
         if not acts and unmatched is not None:
             unmatched.append(group)
         for _, name in acts:
+            if clean is not None:
+                name = clean(name)
+                if not name:
+                    continue
             key = canonical_act(name, aliases)
             if key not in seen:
                 seen.add(key)
                 out.append(name)
     return out
+
+
+_NAME_JOINERS = frozenset({"of", "and", "the", "for", "in", "on", "to", "&"})
+
+
+def title_run(name: str) -> str:
+    """Era B: the Act name as the run of capitalised words before its year.
+
+    Era B prints a summary of facts between the catchwords and "HELD:", so a
+    name can start mid-sentence ("The appellant is a registered dealer under
+    the Tamil Nadu General Sales Tax Act, 1959"). The name kept is the
+    longest run of words ending at the keyword in which every word starts
+    with a capital (or a bracket and a capital, "(Companies)") or is a joiner
+    such as "of" or "and", and whose first word is capitalised: "Tamil Nadu
+    General Sales Tax Act, 1959". "" when only the keyword is left.
+    """
+    head, sep, year = name.rpartition(", ")
+    if not sep:
+        head, year = name, ""
+    words = head.split()
+    keep: list[str] = []
+    for w in reversed(words):
+        bare = w.lstrip("(")
+        if (bare[:1].isupper()) or w.lower() in _NAME_JOINERS:
+            keep.append(w)
+        else:
+            break
+    # a leading joiner, or a lone letter (a margin letter OCR left: "I I Customs Act")
+    while keep and (not keep[-1].lstrip("(")[:1].isupper() or len(keep[-1]) == 1):
+        keep.pop()
+    if len(keep) < 2:  # the keyword alone ("Act, 1959")
+        return ""
+    out = " ".join(reversed(keep))
+    return f"{out}, {year}" if year else out
 
 
 def _split_list(text: str) -> list[str]:
@@ -460,6 +502,196 @@ def _zone_era_c(
     )
 
 
+# --- Era B -----------------------------------------------------------------------
+
+# The bench line when OCR breaks the Era C form: "JJ,]", "JJ.].", "JJ.J" or
+# "JJ � J" at the end, or no opening bracket ("tS. MURTAZA FAZAL ALI, ...
+# JJ.J"). A line ending in "JJ" or "C.J.", or "J." with a closing bracket.
+_B_BENCH = re.compile(
+    r"^[^\n]*(?:\bJ[ \t]?J[ \t]?[.,]?[ \t]?[\])J}]?|\bJ[ \t]?[.,][ \t]?[\])}]"
+    r"|\bC[ \t]?\.?[ \t]?J[ \t]?I?[ \t]?[.,]?[ \t]?[\])}])[^\w\n]{0,4}$",
+    re.MULTILINE,
+)
+# "HELD:" with the OCR forms of 1965-2009 scans: "HELB :", "HBLD:", "HELD;".
+_B_HELD = re.compile(r"\bH[EB][LI1][DB][ \t]*[:;]")
+# The jurisdiction line with OCR damage: "CtVIL APPELLATE JURISDICTION",
+# "C1v1L APPHLATE JURISDICTION", "CRIMINAL APPELLATE JuR1smcnoN", ".E CIVIL ..."
+# (a margin letter or speck first). Upper-case first word, as in Era C.
+_B_JURISDICTION = re.compile(
+    r"^[ \t]*[^\w\n]{0,3}[ \t]*(?:[A-H][ \t]+)?"
+    r"(?:C[A-Za-z0-9.!]{2,3}L\b|CR[A-Za-z1!]{3,6}L|OR[A-Za-z1!]{3,6}L|WR[A-Z1l]{1,2}T|APP[A-Z1l]{3,6}E)"
+    r"[A-Za-z0-9 \t()/&,.\-]{0,30}?\bJ[A-Za-z0-9!]{3,12}",
+    re.MULTILINE,
+)
+# "The Judgment of the Court was delivered by", "The following Order of the
+# Court was delivered:", "The following Judgments were deliver~d;", with OCR
+# forms ("J udi:mcnt of the Cou:t", "of' the Court"); "delivered" may wrap.
+_B_DELIVERED = re.compile(
+    r"^[^\n]{0,60}?(?:Court|Judgments?|Orders?|C\S{3,4}[tl])[^\n\w]{0,3}[ \t]+"
+    r"(?:was|were)\s*[.,]?\s*deliver",
+    _F,
+)
+# The author line that opens the judgment when no "delivered by" line is
+# printed: "KRISHNA IYER, J. The detenu ...", "S.B. SINHA, J. A Will was ...",
+# "MADON J. These two Appeals" (upper-case name; counsel lines are mixed case).
+_B_AUTHOR = re.compile(
+    r"^[ \t]*[A-Z][A-Z0-9. ]{2,40},?[ \t]*(?:C\.J|J)\.(?![A-Za-z])", re.MULTILINE
+)
+# "JUDGMENT" or "ORDER" alone on a line (upper case).
+_B_JUDGMENT_LINE = re.compile(
+    r"^[ \t]*(?:J[ \t]?U[ \t]?D[ \t]?G[ \t]?(?:E[ \t]?)?M[ \t]?E[ \t]?N[ \t]?T"
+    r"|O[ \t]?R[ \t]?D[ \t]?E[ \t]?R)[ \t]*:?[ \t]*$",
+    re.MULTILINE,
+)
+# Where the case details start when no jurisdiction line is found.
+_B_DETAILS = re.compile(
+    r"^[ \t]*(?:(?:Appeals?|Petitions?)[ \t]+(?:by|from|under)\b"
+    r"|From[ \t]+the[ \t]+(?:Judgment|Order)|\((?:Under|Appeal)\b)",
+    re.MULTILINE,
+)
+# How far after the jurisdiction line the "delivered by" line may be: the case
+# number, the order appealed from and the counsel lines come between.
+DELIVERED_WINDOW = 3000
+# Held points numbered "(1)", "(i)", "(I)" (OCR for "(1)").
+_B_POINT = re.compile(
+    r"(?:^|(?<=\s))\([ \t]*([0-9]{1,2}|[ivx]{1,5}|[IVX]{1,5}|l|!)[ \t]*\)\s+(?=\S)"
+)
+_ROMAN = {"i": 1, "v": 5, "x": 10}
+
+
+def _point_value(label: str) -> int | None:
+    if label.isdigit():
+        return int(label)
+    if label in ("l", "!", "I"):
+        return 1
+    total, prev = 0, 0
+    for ch in reversed(label.lower()):
+        v = _ROMAN.get(ch)
+        if v is None:
+            return None
+        total += -v if v < prev else v
+        prev = max(prev, v)
+    return total
+
+
+def _era_b_points(text: str, start: int, end: int) -> list[HeldPoint]:
+    """Held points of one Era B HELD block.
+
+    Numbered like Era C ("1.", "1.1") or in brackets ("(1)", "(i)"): the
+    bracketed split is used when the Era C one finds a single point. Bracketed
+    numbers must run 1, 2, 3 ... and start a line; the first may instead
+    follow "HELD:" directly, and must come within FIRST_POINT_WINDOW
+    characters.
+    """
+    points = _era_c_points(text, start, end)
+    if len(points) > 1:
+        return points
+    cuts: list[int] = []
+    for m in _B_POINT.finditer(text, start, end):
+        v = _point_value(m.group(1))
+        if v != len(cuts) + 1:
+            continue
+        line_start = _LINE_START.search(text, max(0, m.start() - 20), m.start()) is not None
+        if cuts:
+            ok = line_start
+        else:
+            ok = m.start() - start <= 3 or (line_start and m.start() - start <= FIRST_POINT_WINDOW)
+        if ok:
+            cuts.append(m.start())
+    if len(cuts) < 2:
+        return points
+    # Text between "HELD:" and the first number stays with the first point.
+    bounds = [start, *cuts[1:], end]
+    out = []
+    for s, e in itertools.pairwise(bounds):
+        hp = _held_point(text, s, e)
+        if hp:
+            out.append(hp)
+    return out
+
+
+def _zone_era_b(
+    text: str,
+    settings: Settings,
+    aliases: Mapping[str, str],
+    unmatched: list[str] | None = None,
+) -> Zones:
+    """Era B zones: as Era C, with the OCR forms of HELD and the jurisdiction
+    line, bracketed Held points, no "Case Law Reference" table, and the
+    judgment starting at "The Judgment of the Court was delivered by" (or a
+    "JUDGMENT" / "ORDER" line, or the author's "NAME, J." line) after the
+    case details and counsel."""
+    n = len(text)
+    missing: list[Zone] = []
+    held_rx = (
+        _B_HELD if _B_HELD.search(text) else _C_HELD_TITLE if _C_HELD_TITLE.search(text) else None
+    )
+    first_held = held_rx.search(text) if held_rx else None
+    limit = min(BENCH_WINDOW, first_held.start() if first_held else n)
+    bench = _C_BENCH.search(text, 0, limit) or _B_BENCH.search(text, 0, limit)
+    if bench:
+        header_span = (0, bench.end())
+        ed_start = _line_end(text, bench.end())
+    else:
+        header_span = (0, 0)
+        ed_start = 0
+        missing.append(Zone.HEADER)
+    helds = list(held_rx.finditer(text, ed_start)) if held_rx else []
+    search_from = helds[0].end() if helds else ed_start
+    juris = _first(_B_JURISDICTION, text, search_from)
+    after = juris.end() if juris else search_from
+    window_end = after + DELIVERED_WINDOW if juris else n
+    marks = [
+        m
+        for m in (
+            _first(_B_DELIVERED, text, after),
+            _first(_B_JUDGMENT_LINE, text, after),
+            _first(_B_AUTHOR, text, after),
+        )
+        if m is not None and m.start() < window_end
+    ]
+    delivered = min(marks, key=lambda m: m.start()) if marks else None
+    if juris:
+        ed_end = juris.start()
+    elif delivered:
+        details = _first(_B_DETAILS, text, search_from)
+        ed_end = (
+            details.start()
+            if details and details.start() < delivered.start()
+            else delivered.start()
+        )
+    else:
+        ed_end = n
+    helds = [h for h in helds if h.start() < ed_end]
+    if delivered:
+        judgment_span = (delivered.start(), n)
+    elif juris:
+        judgment_span = (juris.start(), n)
+    else:
+        judgment_span = (0, n)
+        missing.append(Zone.JUDGMENT)
+
+    catch_end = helds[0].start() if helds else ed_end
+    acts = extract_era_c_acts(
+        text[ed_start:catch_end], settings, aliases, unmatched, clean=title_run
+    )
+    editorial: list[HeldPoint] = []
+    for i, h in enumerate(helds):
+        block_end = helds[i + 1].start() if i + 1 < len(helds) else ed_end
+        editorial.extend(_era_b_points(text, h.end(), block_end))
+    if not editorial and ed_start >= ed_end:
+        missing.append(Zone.EDITORIAL)
+    return Zones(
+        header_span=header_span,
+        issue_span=None,
+        editorial=editorial,
+        acts=acts,
+        keywords=[],
+        judgment_span=judgment_span,
+        missing=missing,
+    )
+
+
 def _zone_era_d(text: str, aliases: Mapping[str, str]) -> Zones:
     n = len(text)
     marks = {
@@ -540,4 +772,6 @@ def zone(
         aliases = load_act_aliases(settings)
     if parsed.era is Era.D:
         return _zone_era_d(parsed.clean_text, aliases)
+    if parsed.era is Era.B:
+        return _zone_era_b(parsed.clean_text, settings, aliases, unmatched)
     return _zone_era_c(parsed.clean_text, settings, aliases, unmatched)

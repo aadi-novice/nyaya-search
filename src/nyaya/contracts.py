@@ -25,6 +25,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "contracts" / "schema.json"
 
 
 class Era(StrEnum):
+    B = "b"
     C = "c"
     D = "d"
     OUT_OF_SCOPE = "out_of_scope"
@@ -89,7 +90,7 @@ def _check_span(start: int, end: int, what: str) -> None:
 
 class ParsedDoc(Contract):
     path: str
-    era: Era  # c | d only
+    era: Era  # b | c | d only
     clean_text: str
     # (char_offset, page) at the start of each line; page = printed SCR page
     position_map: list[tuple[int, int]]
@@ -99,7 +100,7 @@ class ParsedDoc(Contract):
     @model_validator(mode="after")
     def _era(self) -> ParsedDoc:
         if self.era is Era.OUT_OF_SCOPE:
-            raise ValueError("a ParsedDoc is era c or d; out-of-scope PDFs are skipped")
+            raise ValueError("a ParsedDoc is era b, c or d; out-of-scope PDFs are skipped")
         return self
 
 
@@ -293,6 +294,37 @@ class AskResponse(Contract):
     timings_ms: dict[str, float]  # per stage
 
 
+class SearchPassage(PassageRef):
+    """One ranked passage from POST /search: every PassageRef field, plus these."""
+
+    rank: int  # 1 = best
+    rerank_score: float | None = None  # None on the citation-lookup route
+    text: str  # the chunk's clean text (the text quotes are checked against)
+    decision_date: date | None = None
+
+
+class SearchResponse(Contract):
+    """POST /search: the ranked passages /ask would answer from, with no LLM call.
+
+    status: `passages` (top score at or above the refusal threshold, or a
+    citation lookup); `refused` (no candidates, or the top score is below the
+    threshold: the passages are then the nearest ones); `no_match_with_filters`;
+    `error`.
+    """
+
+    request_id: str
+    status: Status
+    passages: list[SearchPassage] = Field(default_factory=list)
+    passages_note: str | None = None
+    top_score: float | None = None
+    threshold: float | None = None  # the refusal threshold in force (hybrid route)
+    notices: list[str]
+    route: Route
+    filters_applied: dict[str, Any]
+    versions: Versions
+    timings_ms: dict[str, float]
+
+
 # --- search ----------------------------------------------------------------------
 
 
@@ -319,6 +351,8 @@ SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     UnverifiedSentence,
     AskRequest,
     AskResponse,
+    SearchPassage,
+    SearchResponse,
     Filters,
     Versions,
     SearchHit,

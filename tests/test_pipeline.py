@@ -611,3 +611,158 @@ def test_act_normalizer_maps_aliases():
 
     norm = act_normalizer(SETTINGS)
     assert norm("Indian Penal Code, 1860") == norm("IPC")
+
+
+# --- search (POST /search): same route and retrieval, no LLM --------------------
+
+
+def test_search_returns_ranked_passages_with_text_and_no_llm():
+    from nyaya.pipeline import search
+
+    deps, traces = make_deps()
+    resp = search(req(), deps)
+    assert resp.status is Status.PASSAGES and resp.route is Route.HYBRID
+    assert [p.chunk_id for p in resp.passages][:2] == [C1, C2]
+    assert [p.rank for p in resp.passages] == list(range(1, len(resp.passages) + 1))
+    first = resp.passages[0]
+    assert first.rerank_score == pytest.approx(0.9)
+    assert first.text == BY_ID[C1].text
+    assert first.case_name == "Najeeb v. Union of India" and first.paras == ["9"]
+    assert first.decision_date == date(2025, 1, 2)
+    assert resp.top_score == pytest.approx(0.9) and resp.threshold == 0.35
+    assert resp.notices == SETTINGS.notices
+    assert {"embed", "keyword", "vector", "rerank", "total"} <= set(resp.timings_ms)
+    assert deps.llm.calls == [] and traces == []  # no LLM call, no trace
+
+
+def test_search_matches_the_passages_ask_answers_from():
+    from nyaya.pipeline import search
+
+    deps, _ = make_deps(llm=None)
+    searched = [p.chunk_id for p in search(req(), deps).passages]
+    asked = [p.chunk_id for p in ask(req(), deps).passages]
+    assert searched == asked
+
+
+def test_search_below_threshold_is_refused_with_nearest_passages():
+    from nyaya.pipeline import search
+
+    deps, _ = make_deps(reranker=FakeReranker("qwen", {"speedy trial": 0.2}))
+    resp = search(req(), deps)
+    assert resp.status is Status.REFUSED
+    assert resp.passages[0].chunk_id == C1 and resp.top_score == pytest.approx(0.2)
+
+
+def test_search_uses_the_fallback_threshold():
+    from nyaya.pipeline import search
+
+    deps, _ = make_deps(reranker=FakeReranker("qwen", fail=True))
+    resp = search(req(), deps)
+    assert resp.status is Status.PASSAGES and resp.threshold == 0.20
+    assert resp.versions.reranker_fallback_used is True
+
+
+def test_search_citation_lookup():
+    from nyaya.pipeline import search
+
+    deps, _ = make_deps()
+    resp = search(req("[2025] 1 S.C.R. 230"), deps)
+    assert resp.status is Status.PASSAGES and resp.route is Route.CITATION_LOOKUP
+    assert [p.chunk_id for p in resp.passages] == [
+        f"{J1}#issue#000",
+        f"{J1}#editorial#001",
+        f"{J1}#editorial#002",
+    ]
+    assert all(p.rerank_score is None for p in resp.passages)
+    assert resp.passages[0].text == "Whether delay in trial justifies bail."
+    assert resp.passages_note == "judgment found by citation" and resp.threshold is None
+    assert deps.engine.calls == [] and deps.reranker.calls == 0
+
+
+def test_search_no_candidates():
+    from nyaya.pipeline import search
+
+    deps, _ = make_deps(engine=FakeEngine(keyword=(), vector=()))
+    assert search(req(), deps).status is Status.REFUSED
+    filtered = search(req(year_from=1950, year_to=1951), deps)
+    assert filtered.status is Status.NO_MATCH_WITH_FILTERS
+    assert filtered.filters_applied == {"year_from": 1950, "year_to": 1951}
+    assert filtered.passages == []
+
+
+def test_search_errors_are_clean():
+    from nyaya.pipeline import search
+    from nyaya.search.postgres import InvalidFilter
+
+    class BadFilter(FakeEngine):
+        def keyword(self, question, filters, k):
+            raise InvalidFilter("unknown outcome filter 'won'")
+
+    class Boom(FakeEngine):
+        def keyword(self, question, filters, k):
+            raise RuntimeError("db gone")
+
+    deps, traces = make_deps(engine=BadFilter())
+    resp = search(req(outcome="won"), deps)
+    assert resp.status is Status.ERROR and "invalid filter" in (resp.passages_note or "")
+    deps, traces = make_deps(engine=Boom())
+    resp = search(req(), deps)
+    assert resp.status is Status.ERROR and "db gone" not in (resp.passages_note or "")
+    assert traces == []
+
+
+def test_retrieval_cache_lets_ask_reuse_search():
+    from nyaya.pipeline import RetrievalCache, search
+
+    deps, traces = make_deps(retrieval_cache=RetrievalCache())
+    searched = search(req(), deps)
+    assert len(deps.engine.calls) == 2 and deps.reranker.calls == 1
+    resp = ask(req(), deps)
+    assert resp.status is Status.ANSWERED
+    assert deps.engine.calls[2:] == [] and deps.reranker.calls == 1  # no second retrieval
+    assert resp.answer[0].citations[0].chunk_id == searched.passages[0].chunk_id
+    assert "retrieval_cache" in resp.timings_ms and "rerank" not in resp.timings_ms
+    (t,) = traces
+    assert t.retrieved[0]["chunk_id"] == C1 and t.rows_returned["keyword"]["returned"] == 2
+    assert t.top_score == pytest.approx(0.9)
+
+
+def test_retrieval_cache_keeps_the_fallback_state():
+    from nyaya.pipeline import RetrievalCache, search
+
+    deps, traces = make_deps(
+        reranker=FakeReranker("qwen", fail=True), retrieval_cache=RetrievalCache()
+    )
+    search(req(), deps)
+    resp = ask(req(), deps)
+    assert resp.versions.reranker_fallback_used and resp.versions.reranker_model == "cohere"
+    assert traces[0].threshold == 0.20
+
+
+def test_retrieval_cache_misses_on_other_filters_and_after_ttl():
+    from nyaya.pipeline import RetrievalCache, search
+
+    now = [0.0]
+    cache = RetrievalCache(max_entries=1, ttl_s=10, clock=lambda: now[0])
+    deps, _ = make_deps(retrieval_cache=cache)
+    search(req(), deps)
+    ask(req(year_from=2020), deps)  # other filters: retrieves again
+    assert deps.reranker.calls == 2
+    ask(req("  Is speedy trial   part of Article 21? "), deps)  # same, up to whitespace
+    assert deps.reranker.calls == 2
+    now[0] = 11.0
+    ask(req(), deps)  # expired
+    assert deps.reranker.calls == 3 and len(cache) == 0
+    search(req(), deps)
+    search(req(year_from=2020), deps)
+    assert len(cache) == 1  # max_entries
+
+
+def test_ask_alone_never_fills_the_cache():
+    from nyaya.pipeline import RetrievalCache
+
+    cache = RetrievalCache()
+    deps, _ = make_deps(retrieval_cache=cache)
+    ask(req(), deps)
+    ask(req(), deps)
+    assert len(cache) == 0 and deps.reranker.calls == 2

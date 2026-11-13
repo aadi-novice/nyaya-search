@@ -13,7 +13,7 @@ import json
 import tomllib
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -91,9 +91,35 @@ class EraMarkersC(_Section):
     year_to: int
 
 
+class EraMarkersB(_Section):
+    margin_line_regex: str
+    min_margin_lines: int
+    year_from: int
+    year_to: int
+
+
 class EraMarkers(_Section):
     d: EraMarkersD
     c: EraMarkersC
+    b: EraMarkersB
+
+
+class EraB(_Section):
+    """Era B layout tunables (pdf_layout, zoner, chunker); x and y are page fractions."""
+
+    left_x: tuple[float, float]
+    right_x: tuple[float, float]
+    ocr_letters: list[str]
+    column_gap: float
+    max_skew: float
+    min_column_lines: int
+    top_y: tuple[float, float]
+    bottom_y: tuple[float, float]
+    title_head_regex: str
+    min_head_upper_share: float
+    paragraph_indent: float
+    paragraph_indent_max: float
+    min_numbered_paragraphs: int
 
 
 class Chunk(_Section):
@@ -119,11 +145,22 @@ class Quote(_Section):
     max_words: int
 
 
+class EmbedModel(_Section):
+    """An embedder other than `embed.model`: a challenger for scripts/select_models.py."""
+
+    revision: str
+    dim: int = Field(ge=1)
+    query_prefix: str
+
+
 class Embed(_Section):
     model: str
     revision: str
-    dim: int
+    dim: int = Field(ge=1)
     query_prefix: str
+    # model name -> its settings, for comparison and Kaggle runs; `model` above
+    # is the one the build and the API use
+    alternatives: dict[str, EmbedModel] = {}
 
 
 class Rerank(_Section):
@@ -195,6 +232,14 @@ class Devset(_Section):
 
 class Judge(_Section):
     min_kappa: float
+    # judge-validate needs at least this many hand labels (design G2: 30-50)
+    min_hand_labels: int = Field(default=30, ge=1)
+    prompt: str = "judge_v1"  # prompts/<prompt>.md
+    max_output_tokens: int = Field(default=600, ge=1)
+    # sent as `reasoning_effort` to reasoning models; "" sends nothing
+    reasoning_effort: str = ""
+    timeout_s: float = Field(default=30.0, gt=0)
+    rpm: float = Field(default=20.0, ge=0)  # 0: no pacing
 
 
 class Bm25Trigger(_Section):
@@ -208,6 +253,36 @@ class EvalCfg(_Section):
 
 class Latency(_Section):
     p95_target_s: float
+    query_count: int = Field(default=30, ge=1)  # the first N questions of the set, by id
+    warmup: int = Field(default=2, ge=0)  # requests run first and not counted
+
+
+class AnswersCfg(_Section):
+    """`nyaya-eval answers` (Phase 3): targets and the free-tier pacing."""
+
+    min_supported_share: float = 0.90  # G2
+    min_unanswerable_refused_share: float = 0.80  # G5
+    llm_rpm: float = Field(default=20.0, ge=0)  # 0: no pacing
+    rate_limit_retries: int = Field(default=6, ge=0)
+    backoff_base_s: float = Field(default=5.0, ge=0)
+    backoff_max_s: float = Field(default=120.0, ge=0)
+
+
+class RagasCfg(_Section):
+    """`nyaya-eval ragas`: RAGAS metrics beside our own (never a gate).
+
+    The LLM is the judge (`JUDGE_*`, paced to `judge.rpm`). Answer relevancy
+    also needs an embedding model, run on the CPU.
+    """
+
+    # statement lists for a long answer outgrow the judge's 600 tokens
+    max_output_tokens: int = Field(default=2048, ge=1)
+    # at most this many retrieved passages (rank order) per question
+    max_contexts: int = Field(default=8, ge=1)
+    answer_relevancy: bool = True  # false: skip it (no embedding model is loaded)
+    strictness: int = Field(default=3, ge=1)  # questions generated per answer
+    embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embed_device: str = "cpu"
 
 
 class Lawyer(_Section):
@@ -229,7 +304,8 @@ class OutcomeMap(_Section):
 
 
 class Secrets(BaseSettings):
-    """Secrets from the environment and `.env`. Empty values count as unset."""
+    """Secrets (and the one deployment switch) from the environment and `.env`.
+    Empty values count as unset."""
 
     model_config = SettingsConfigDict(
         extra="ignore", env_ignore_empty=True, case_sensitive=False, frozen=True
@@ -243,7 +319,13 @@ class Secrets(BaseSettings):
     judge_api_key: SecretStr | None = None
     judge_model: str | None = None
     openrouter_api_key: SecretStr | None = None
+    kaggle_username: str | None = None
+    kaggle_key: SecretStr | None = None
+    kaggle_api_token: SecretStr | None = None
     hf_home: str | None = None
+    # where the API runs the embedder and reranker: the local GPU, or the CPU
+    # (the Docker image; slower, for demos without a GPU)
+    nyaya_device: Literal["cuda", "cpu"] = "cuda"
 
 
 class Settings(_Section):
@@ -254,6 +336,7 @@ class Settings(_Section):
     bands: Bands = Bands()
     running_head_patterns: list[str]
     era_markers: EraMarkers
+    era_b: EraB
     chunk: Chunk
     opinion: OpinionCfg
     acts: Acts
@@ -273,6 +356,8 @@ class Settings(_Section):
     bm25_trigger: Bm25Trigger
     eval: EvalCfg
     latency: Latency
+    answers: AnswersCfg = AnswersCfg()
+    ragas: RagasCfg = RagasCfg()
     lawyer: Lawyer
     build: Build
     encoder_check: EncoderCheck

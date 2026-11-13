@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # No database on CI: the DB tests skip when DATABASE_URL is unset.
+      DATABASE_URL: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      # On Linux, pyproject.toml takes torch from the PyTorch CPU index, so
+      # this installs the CPU build (no CUDA wheels). --locked fails if
+      # uv.lock is out of date with pyproject.toml.
+      - name: Install dependencies
+        run: uv sync --locked --extra dev --extra eval
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Tests
+        run: uv run pytest -q

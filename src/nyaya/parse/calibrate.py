@@ -25,6 +25,7 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+import pandas as pd
 import pymupdf
 
 from nyaya.config import REPO_ROOT, Settings
@@ -192,13 +193,18 @@ def measure_bands(docs: Iterable[tuple[str, bytes]], patterns: Sequence[str]) ->
     }
 
 
-def sample_era_c(settings: Settings, root: Path) -> list[tuple[str, bytes]]:
-    """The seeded sample's Era C PDFs, as (path, bytes)."""
-    m = load_manifest(settings, root)
+def calibration_sample(manifest: pd.DataFrame, settings: Settings) -> pd.DataFrame:
+    """The seeded calibration sample (every era): `nyaya-eval g6-holdout` excludes it."""
+    m = manifest
     pool = m[m["has_pdf"] & m["decision_year"].between(YEAR_FROM, YEAR_TO)]
     pool = pool.sort_values("path", kind="mergesort").reset_index(drop=True)
     n = min(settings.calibrate.sample_size, len(pool))
-    sample = pool.sample(n=n, random_state=settings.calibrate.seed) if n else pool
+    return pool.sample(n=n, random_state=settings.calibrate.seed) if n else pool
+
+
+def sample_era_c(settings: Settings, root: Path) -> list[tuple[str, bytes]]:
+    """The seeded sample's Era C PDFs, as (path, bytes)."""
+    sample = calibration_sample(load_manifest(settings, root), settings)
     markers = settings.era_markers
     out = []
     for r in sample.itertuples(index=False):

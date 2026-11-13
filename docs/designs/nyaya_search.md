@@ -458,6 +458,8 @@ test.
     | --- | --- |
     | **Era D (late 2023+)** | at least 2 of: `Issue for Consideration`, `Headnotes`, `Case Law Cited`, `List of Acts`, `List of Keywords` |
     | **Era C (2010–2023)** | not Era D, **and** at least 3 lines matching `^\s*[A-H]\s*$`, **and** `HELD\s*:` present, **and** the decision year is 2010–2023 |
+    | **Era B (1964–2009; added 2026-11-13, Phase 4)** | not Era D or C, **and** at least 5 lines matching `era_markers.b.margin_line_regex` (a margin letter alone on a line, or at either end of a body line), **and** the decision year is 1950–2009 (the markers, not the year, separate it from Era A) |
+    | **out_of_scope** | anything else, logged to `build/skipped.csv` with reason `era_out_of_scope`; detail `era_a_scan` for a year up to 2009 without margin letters (Era A) |
 
     **Thresholds lowered 2026-11-13 (Phase 1 integration, measured on 80
     judgments per decision year, 2010–2026):** with "at least 3" labels,
@@ -480,7 +482,21 @@ test.
     top band is now 0–0.17. On 100 Era D judgments from 2023–2026, every
     line this removed was a running head, a head continuation or a page
     number.
-    | **out_of_scope** | anything else, logged to `build/skipped.csv` with reason `era_out_of_scope` |
+*   **Era B (as built, 2026-11-13, branch `p4-era-b`; measurements in
+    `docs/era_b_findings.md`):** margin letters are removed by the body
+    column, not a calibrated band: a short token (a letter A–H, an OCR
+    variant, or a speck) at least `era_b.column_gap` outside the column,
+    which is measured per page after removing the scan's skew (the slope of
+    the letter columns). Running heads are the first rows of a page that
+    start or end with the page number, name the reports, or are a case
+    title in capitals. Paragraph breaks come from first-line indents and are
+    written as blank lines in the clean text. Tunables are in `[era_b]`.
+    Era C and Era D output is unchanged (byte-identical on 182 judgments),
+    so `clean_text` and `chunker` versions are not bumped. Re-checked after
+    the merge with `phase-1` (ct2, linear-time paragraph sequence): Era C/D
+    clean text and chunks byte-identical to `phase-1` on 12 judgments per
+    year for 2010, 2012, ..., 2022 and 2023–2026 (seed 42), and Era B
+    output unchanged apart from the version string (ct2).
 *   **Furniture removal.** Extract words with their bounding boxes, then
     remove three kinds of furniture **by position**, before words are joined
     into lines:
@@ -510,6 +526,15 @@ matching line ends:
 | editorial | `^Headnotes\b` → `^Case Law Cited\s*$` | the line after the bench line → the first line matching `^(?:Case Law Reference|CIVIL|CRIMINAL|ORIGINAL|WRIT|APPELLATE)\b.*JURISDICTION|^Case Law Reference\s*$` | one chunk per Held point, tagged `editorial`, keeping its `para_refs` |
 | references | `^Case Law Cited\s*$` → `^Case Arising From\s*$` (holds "List of Acts" and "List of Keywords") | `^Case Law Reference\s*$` → the jurisdiction line; Acts come from the catchwords (rules below) | Acts and keywords become `refs` rows; nothing is chunked |
 | judgment | `^Judgment\s*/\s*Order of the Supreme Court\s*$` → text end | the jurisdiction line → text end | split into opinions, then chunked |
+
+**Era B** (added 2026-11-13) uses the Era C patterns with OCR forms
+("HELB :", "CtVIL APPELLATE JuR1smcnoN", damaged bench lines), Held
+points numbered "1." or "(1)", "(i)", and no references zone. The judgment
+starts at "The Judgment of the Court was delivered by" (or a "JUDGMENT" /
+"ORDER" line, or the author's "NAME, J." line) after the jurisdiction line,
+so the case details and counsel are in no zone. Opinions start at an author
+line followed by the first sentence, with OCR-tolerant name matching. A
+numbered-paragraph sequence needs `era_b.min_numbered_paragraphs` (3).
 
 If a zone cannot be found, it is recorded in `Zones.missing`. The judgment
 zone then falls back to the whole clean text, and the document is flagged
@@ -819,6 +844,24 @@ filters_applied   object
 versions          object  { index_version, config_version, prompt_version, llm_model, reranker_model,
                             reranker_fallback_used: bool, embed_model }
 timings_ms        object  per stage
+```
+
+*   **As built (2026-11-13, branch `p4-demo`): `POST /search`.** Same
+    request body as `/ask`. It runs `/ask`'s route and retrieval (alias
+    lookup, or search, fusion, expansion and rerank) and stops before the
+    LLM. Response `SearchResponse`:
+
+```text
+request_id, notices, route, filters_applied, versions, timings_ms   as in /ask
+status            enum  passages | refused | no_match_with_filters | error
+                        passages: a citation lookup, or top score >= threshold
+                        refused: no candidates, or top score < threshold (passages = the nearest)
+passages          [ SearchPassage ]   every PassageRef field, plus rank (1 = best),
+                                      rerank_score? (null on lookup), text (the chunk's clean text),
+                                      decision_date?
+passages_note     string?
+top_score         float?
+threshold         float?            the refusal threshold in force (hybrid route)
 ```
 
 ### Query pipeline, step by step
@@ -1390,6 +1433,12 @@ to.
     *   the HNSW build no longer fits Postgres's memory.
 *   **Older eras.**
     *   Era B: position-based removal of margin letters, tuned for that era.
+        Parser, zoner and chunker built and measured 2026-11-13
+        (`docs/era_b_findings.md`: the G6 gates pass on 1970–2009
+        samples); the full 1970–2009 build (about 305,000 chunks, about 5
+        hours of embedding) is still to run. Open: page-and-margin-letter
+        pinpoints ("[79-G-H]") in the position map, and footnotes left
+        inline.
     *   Era A: Docling with OCR on Kaggle, plus rules that cut out
         neighbouring-case text.
     *   The fuzzy quote route (Alternative S) belongs to this phase.
@@ -1398,6 +1447,7 @@ to.
     *   Labelling individual sentences, with code copying the quote
         (Alternative D variant), as one evaluation run.
     *   A `/search` endpoint, so passages show before the written answer.
+        (Built 2026-11-13; see "API" under Shared contracts.)
     *   A set of probe questions that checks the threshold on every new
         index version.
     *   Using the headnote as a second source for opinion type.
@@ -2057,6 +2107,34 @@ to.
     *   **Reference vectors:** it also writes
         `build/vectors/reference/passages.json` and
         `build/vectors/reference/vectors.npy`.
+*   **As built (2026-11-13, branch `p4-kaggle`):**
+    *   **`embed_corpus.py`** is self-contained (numpy, torch,
+        sentence-transformers). Per model it writes `<model-dir>/vectors/`
+        (`<year>.npy`, `.ids.txt`, `.sha1.txt`, `reference/`),
+        `state/embed_<year>.json` (the same stamp as `nyaya-build embed`, so a
+        copied year counts as done) and `embed_report.json` (GPU, versions,
+        time, chunks/s, peak VRAM). Its copies of `document_text`,
+        `text_hash`, `token_batches`, the stamp and the padding table are
+        checked against the originals by `tests/test_kaggle.py`.
+    *   **`kaggle/push.py`** (official `kaggle` package, extra `kaggle`):
+        `dataset` (a private dataset of `chunks/<year>.jsonl`), `kernel` (a
+        private script kernel on `NvidiaTeslaT4`, internet on, with
+        `sentence-transformers` and `transformers` pinned to `uv.lock`),
+        `status --wait`, `download`. A `KGAT_` key is passed as
+        `KAGGLE_API_TOKEN`; credentials are never printed.
+    *   **Embedder profiles:** `[embed.alternatives."BAAI/bge-m3"]` holds the
+        challenger (revision pinned, dim 1024, no query prefix).
+        `Embedder(settings, model_name=...)` picks a profile; bge-m3 pads on
+        the right (CLS pooling), Qwen on the left (last-token pooling).
+    *   **First run (2025, 20,999 ch4 chunks, one Tesla T4, fp16, batch 32,
+        32k-token budget):** Qwen3-Embedding-0.6B 1,297 s, 16.2 chunks/s,
+        peak 4.3 GB allocated; bge-m3 453 s, 46.4 chunks/s, peak 1.8 GB.
+        About 32 minutes of GPU quota in all, including package installs and
+        model downloads (the API reported 6 hours allowed). Kaggle gave the
+        session two T4s; the script uses one. On the 18,417 chunks whose text was unchanged since
+        the local RTX 2060 embed, the Kaggle Qwen vectors reach a cosine of
+        0.9995 or more with the local ones (`encoder_check.min_cosine` is
+        0.999).
 
 #### 29. `src/nyaya/store/loader.py` (Create, Phase 1)
 
@@ -2202,6 +2280,21 @@ to.
             in its worker thread and writes its own trace when it ends, so
             such a request can leave two rows (the API's `error` row and the
             pipeline's row), with different request IDs.
+    *   **As built (2026-11-13, branch `p4-demo`):**
+        *   **`search(request, deps) -> SearchResponse`** shares `ask`'s
+            route, alias lookup and hybrid retrieval (`_retrieve`: search,
+            fusion, expansion, fetch, rerank with the fallback, top
+            `final_k`); only the LLM and the check are left out. It writes
+            no trace (the `/ask` that follows is traced).
+        *   **Retrieval cache:** `Deps.retrieval_cache` (a
+            `RetrievalCache`, 64 entries, 300 s) is set by the API only.
+            `search` fills it; `ask` reads it, keyed by index version,
+            question (whitespace collapsed) and filters. A hit skips the
+            embed, search and rerank stages, carries over the reranker and
+            fallback state, and is timed as `retrieval_cache`; the trace
+            still records the retrieved chunks and rows returned. `ask`
+            alone never fills it, so the evaluation runs (which build their
+            own `Deps`) are unaffected.
 
 #### 37. `src/nyaya/api/app.py` (Create, Phase 1)
 
@@ -2217,6 +2310,17 @@ to.
     *   **Timeout:** each request runs through `asyncio.wait_for(..., 30)`
         in a thread pool. On timeout it returns `error`, and the trace is
         still written.
+    *   **As built (2026-11-13, branch `p4-demo`):** `POST /search`
+        (`AskRequest` -> `SearchResponse`) runs under the same timeout and
+        returns `error` on a timeout or an exception, without a trace.
+    *   **As built (2026-11-13, branch `p4-demo`): CPU container.**
+        `nyaya-api --host` (default 127.0.0.1) lets the `Dockerfile` bind
+        0.0.0.0 inside its container; the compose `api` profile publishes
+        it on the host's 127.0.0.1:8000 next to `db`. `NYAYA_DEVICE=cpu`
+        (environment, default `cuda`) loads the embedder and reranker in
+        float32 on the CPU and lets `startup_check` pass without CUDA. No
+        model weights are in the image; they download into the `hf_cache`
+        volume. The GPU path and its float16 models are unchanged.
 
 #### 38. `web/index.html`, `web/app.js`, `web/style.css` (Create, Phase 1)
 
@@ -2234,6 +2338,22 @@ to.
         `refused`, it is marked "does not answer the question".
     *   **Notices:** always visible.
     *   **Timing:** shown in small text.
+    *   **As built (2026-11-13, branch `p4-demo`):**
+        *   **Two steps:** on submit the page calls `/search` and shows the
+            ranked passages (case, citation, paragraph, page, date, score,
+            text) at once, then calls `/ask` and renders the answer above
+            them. The `/ask` reuses the retrieval through the cache.
+        *   **Citation chips:** each verified citation is a chip (`P1`,
+            case, para). Activating it scrolls to the passage card with the
+            same `chunk_id` and marks the quote inside its text; the card
+            links to `/judgment/{path}?highlight=`.
+        *   **Answer states:** unverified sentences, gaps, refusal ("No
+            relevant judgment found", passages marked "does not answer the
+            question"), `passages` notes and `no_match_with_filters` are
+            shown as before; if `/ask` fails after `/search` succeeded, the
+            passages stay and the error is shown above them.
+        *   **Filters:** year range, Act, outcome and judge, collapsed under
+            "Filters", with a count of active filters.
 
 #### 39. `src/nyaya/eval/cli.py` (Create, Phase 1)
 
@@ -2254,6 +2374,27 @@ to.
     *   `judge-validate`;
     *   `lawyer-export`;
     *   `lawyer-import`.
+    *   **As built (2026-11-13, branch `p4-demo`): `g6-holdout`**
+        (`eval/g6_holdout.py`).
+        *   **Sample:** manifest rows with a PDF and a decision year in
+            `--years` (default 2010-2026), minus the calibration sample
+            (`calibrate.seed`, all eras, as `nyaya-build calibrate` draws
+            it), in path order, shuffled with `g6.holdout_seed`. Rows are
+            taken in that order until `g6.holdout_size` in-scope PDFs are
+            kept; out-of-scope or failing PDFs are recorded as skipped and
+            replaced by the next row. Uncalibrated Era C bands stop the run.
+        *   **Output** under `eval/runs/g6_holdout/` (git-ignored): per PDF
+            `page-NNN.png`, `clean_text.txt` and `review.html` (each page
+            image beside that page's clean text, split by the position map);
+            `index.html`; `handcheck.csv` with blank
+            `margin_letters_found`, `running_heads_found` and `notes`
+            columns; `sample.json` (seed, years, excluded paths, skipped
+            rows).
+        *   **Hints, not the gate:** per PDF, the count of
+            `(?<=[a-z,]) [A-H] (?=[a-z])` matches and of lines matching
+            `running_head_patterns`.
+        *   **Exit codes:** 0 when `holdout_size` PDFs were laid out; 2 when
+            fewer were (or on a setup error).
 
 #### 40. `src/nyaya/eval/devset_from_held.py` (Create, Phase 1)
 
@@ -2330,6 +2471,15 @@ to.
         2060, and peak GPU memory together.
     *   **Output:** the results go to `docs/model_selection.md`. The author
         chooses, and the choice is written to config.
+*   **As built (2026-11-13, branch `p4-kaggle`):** `--vectors MODEL=DIR`
+    takes a model's document vectors from a Kaggle output folder (file 28)
+    instead of encoding them locally. The folder's reference vectors must
+    pass `startup_check` against the local embedder first; queries are always
+    embedded locally with the model's prefix, and throughput and memory come
+    from `embed_report.json` (the report's "encoded on" column says where).
+    The comparison stays in memory: no temporary schema or index version is
+    needed. Local peak memory now leaves out the reranker, which is loaded
+    first.
 
 #### 45. `src/nyaya/eval/answers.py`, `src/nyaya/eval/judge.py`, `prompts/judge_v1.md`, `src/nyaya/eval/latency.py` (Create, Phase 3)
 
@@ -2350,6 +2500,62 @@ to.
         chunk_id, label}`.
     *   **`latency.py`:** runs a fixed query set warm, one request at a time,
         and reports the 95th percentile against `latency.p95_target_s`.
+*   **As built (2026-11-12, branch `p3-answer-eval`):**
+    *   **Free-tier pacing (`eval/ratelimit.py`):** answer and judge calls
+        are spaced to `answers.llm_rpm` and `judge.rpm`. HTTP 429 backs off
+        exponentially from `answers.backoff_base_s` (capped at
+        `answers.backoff_max_s`, lengthened by a `Retry-After` header), for
+        `answers.rate_limit_retries` retries; then the session stops without
+        recording that question. Waits are taken off the pipeline's clock, so
+        they never count against `timeouts.request_s`.
+    *   **Resume:** one line per finished question in
+        `eval/runs/answers/<run_id>/results.jsonl`, keyed by run and question
+        id; `--run-id` skips finished questions, `--limit` caps a session,
+        and `--redo-errors` redoes `error` results. A resume must use the
+        same datasets and the same active index. `meta.json` records each
+        session's date, provider host, models and tokens (from the
+        provider's `usage`, which `LLMClient.last_usage` now keeps). The
+        `eval_runs` row is written, under the answers run id, only when every
+        question is finished (`save_run` upserts on `run_id`).
+    *   **G1:** rule breaks come from the trace; every shown citation's quote
+        is re-checked against its chunk, and any failure fails G1.
+    *   **G2:** the judge sees `header` + blank line + `text` for each cited
+        chunk, best verdict wins and judging stops at the first `supported`.
+        Pairs the judge could not label (`error`) are left out of the share
+        and counted.
+    *   **G5:** `passages` and `error` results are left out of both shares;
+        `no_match_with_filters` counts as a refusal. Targets:
+        `answers.min_unanswerable_refused_share` (0.80) and
+        `refusal.max_wrong_refusal_share` (0.10).
+    *   **Wrong answers** (a verified sentence not rated `supported`; a
+        `partial` counts): a **hallucination** if no retrieved passage (the
+        reranked top `retrieval.final_k`) rates it `supported` or `partial`;
+        else a **retrieval error** if the question has gold paragraphs and
+        none was retrieved (the `retrieval.py` paragraph rule); else a
+        **reasoning error**, which includes questions without gold.
+    *   **G9:** each adversarial `expect` as in `eval/datasets/README.md`,
+        plus no failed re-check, plus a refusal or the "not legal advice"
+        notice for `advice` and `false_premise`.
+    *   **Judge:** `prompts/judge_v1.md` asks for `{"label", "reason"}` and
+        nothing else; the parse is strict (exact keys, known label). A bad
+        reply is retried once with the parse error; a second bad reply, or a
+        network error, is `error`. Settings: `judge.prompt`,
+        `judge.max_output_tokens`, `judge.reasoning_effort`,
+        `judge.timeout_s`, `judge.rpm`. Checked on 2026-11-12 against the
+        configured Groq judge on three hand-made pairs: all three labels
+        (supported, partial, unsupported) came back as expected, first try.
+    *   **`judge-validate`:** unweighted Cohen's kappa over the three
+        labels; it passes only with kappa ≥ `judge.min_kappa` on at least
+        `judge.min_hand_labels` (30) scored pairs. Passages are read from the
+        active index by `chunk_id`. A missing or empty
+        `hand_labels_v1.jsonl` is a setup error with a message.
+    *   **`latency`:** the first `latency.query_count` (30) questions by id,
+        after `latency.warmup` (2) unscored requests. Percentiles are
+        nearest-rank; a request over `timeouts.request_s` or ending in
+        `error` is a failure and counts as infinitely slow. Pacing happens
+        between requests, outside the timed region, and a rate-limited
+        request is retried rather than sampled. Stages are reported as
+        retrieve, rerank, llm, check and other, from `timings_ms`.
 
 #### 46. `eval/lawyer_review/rubric_v1.md`, `src/nyaya/eval/lawyer.py` (Create, Phase 3)
 
@@ -2364,6 +2570,19 @@ to.
         with `lawyer.seed`, to CSV and HTML.
     *   **`lawyer-import`:** reads the ratings CSV into `eval_runs`.
     *   **Status:** qualitative evidence, never a gate.
+*   **As built (2026-11-12, branch `p3-answer-eval`):**
+    *   **Sample:** answered questions (at least one verified sentence) of
+        one answers run (default: the latest), sorted by id, sampled with
+        `random.Random(lawyer.seed)`.
+    *   **Output:** `eval/runs/lawyer/<answers run>/` holds `ratings.csv`
+        (`review_id, question_id, question, answer, right_paragraphs,
+        law_correct, nothing_missing, usable, comment, reviewer`; UTF-8 with
+        BOM so spreadsheet programs open it cleanly), `review.html` (one
+        standalone page, no scripts, light and dark) and a copy of the rubric.
+    *   **Import:** each rating must be 1, 2, 3 or blank, or the row is
+        named and the import fails. Means, counts and the share of 3s per
+        question go to `eval_runs` as a `lawyer-review` run linked to the
+        answers run. The command exits 0 whatever the ratings.
 
 #### 47. `README.md` (Modify, Phase 1)
 

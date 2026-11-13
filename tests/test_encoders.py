@@ -388,3 +388,30 @@ def test_startup_check_bad_passage_entry(settings, tmp_path):
         enc.startup_check(
             settings, FixedEmbedder(unit_rows(1)), tmp_path, cuda_available=lambda: True
         )
+
+
+def test_startup_check_on_the_cpu_deployment(settings, tmp_path):
+    rep = enc.startup_check(
+        settings, build_dir=tmp_path, cuda_available=lambda: False, require_cuda=False
+    )
+    assert rep == {"cuda": False, "reference_checked": False, "min_cosine": None}
+
+
+def test_half_precision_only_on_the_gpu():
+    import torch
+
+    assert enc._dtype("cuda") is torch.float16
+    assert enc._dtype("cuda:0") is torch.float16
+    assert enc._dtype("cpu") is torch.float32
+
+
+def test_device_switch_comes_from_the_environment(monkeypatch):
+    from nyaya.config import ConfigError, load_settings
+
+    monkeypatch.delenv("NYAYA_DEVICE", raising=False)
+    assert load_settings(env_file=None).secrets.nyaya_device == "cuda"
+    monkeypatch.setenv("NYAYA_DEVICE", "cpu")
+    assert load_settings(env_file=None).secrets.nyaya_device == "cpu"
+    monkeypatch.setenv("NYAYA_DEVICE", "tpu")
+    with pytest.raises(ConfigError, match="nyaya_device"):
+        load_settings(env_file=None)

@@ -62,6 +62,58 @@ held_regex = 'HELD\s*:'
 year_from = 2010
 year_to = 2023
 
+# Era B: the printed SCR volumes from 1964 to 2009, scanned with OCR, with
+# margin letters A-H beside the text (docs/era_b_findings.md). The letters sit
+# alone on a line, or PyMuPDF puts them on the body line ("D communicated to
+# ...", "... cross over D"); the pattern counts both. On the first 3 pages, 149
+# of 150 judgments decided 1950-1963 (Era A, sampled) show 0-2 such lines (one
+# 1957 judgment 4); from 1964 nearly all show 10-24, and 1-2 page orders 4-5.
+# The markers, not the year, separate Era A from Era B, so the window opens in
+# 1950.
+[era_markers.b]
+margin_line_regex = '^[ \t]*[A-H](?:[ \t]*$|[ \t]+\S)|\S[ \t]+[A-H][ \t]*$'
+min_margin_lines = 5
+year_from = 1950
+year_to = 2009
+
+# Era B layout (pdf_layout, zoner, chunker). x and y are page fractions, as
+# in [bands]. Measured on 160 judgments (40 per decade, 1970-2009, seed 42).
+[era_b]
+# Margin letters: a short token (a letter A-H or one of `ocr_letters`, or
+# punctuation only) inside one of these bands and outside the body column by
+# at least `column_gap`. The column is measured on the page's text lines of 4+
+# words, after removing the scan's skew (the drift of the letter columns down
+# the page, at most `max_skew` of the width per page height; 0.035 is
+# typical); with fewer than `min_column_lines` lines a letter must stand
+# MIN_MARGIN_GAP points clear of other words instead. The bands are wide
+# because the column decides: some 1970-1985 PDFs place the scanned page in
+# the middle of a letter-size sheet.
+left_x = [-0.05, 0.35]
+right_x = [0.65, 1.05]
+ocr_letters = ["c", "o", "O", "0", "8", "e", "I", "l", "1", "J", "i", "r", "t", "f"]
+column_gap = 0.008
+max_skew = 0.1
+min_column_lines = 5
+# Running heads: "938 SUPREME COURT REPORTS [1985] 2 S.C.R." on even pages,
+# "STATE OF KERALA v. A. LAKSHMIKUTTY [SEN, J.] 143" on odd pages. One of the
+# first two rows of a page, within top_y[1] of the page height below its
+# first text line, is a head when it starts or ends with the printed page
+# number, names the reports, or is a case title (this pattern, with at least
+# `min_head_upper_share` of its letters upper case). top_y and bottom_y are
+# also the bands of the general furniture rules (page numbers, repeats).
+top_y = [0.0, 0.15]
+bottom_y = [0.86, 1.0]
+title_head_regex = '\S\s+[vV][.,]?\s+\S'
+min_head_upper_share = 0.6
+# Paragraphs (Era B judgments are often unnumbered): a line indented by at
+# least `paragraph_indent` (and at most `paragraph_indent_max`) more than the
+# next line starts a paragraph; the clean text gets a blank line before it.
+paragraph_indent = 0.025
+paragraph_indent_max = 0.25
+# A numbered-paragraph sequence needs this many paragraphs, so a lone "752."
+# (a page number or citation at a line start) does not number a judgment.
+min_numbered_paragraphs = 3
+
 [chunk]
 target_words = 400
 min_words = 80
@@ -92,6 +144,14 @@ model = "Qwen/Qwen3-Embedding-0.6B"
 revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"  # Hugging Face commit, pinned 2026-11-13
 dim = 1024
 query_prefix = "Instruct: Given a legal research question, retrieve Supreme Court judgment passages that answer it\nQuery: "
+
+# The challenger compared by scripts/select_models.py and embedded on Kaggle
+# (kaggle/embed_corpus.py). To switch the build and the API to it, copy its
+# name, revision, dim and query_prefix over the four [embed] values above.
+[embed.alternatives."BAAI/bge-m3"]
+revision = "5617a9f61b028005a4858fdac845db406aefb181"  # Hugging Face commit, pinned 2026-11-13
+dim = 1024
+query_prefix = ""  # bge-m3 dense retrieval takes no query instruction
 
 [rerank]
 model = "Qwen/Qwen3-Reranker-0.6B"
@@ -157,6 +217,12 @@ seed = 11
 
 [judge]
 min_kappa = 0.6
+min_hand_labels = 30        # judge-validate refuses to report a pass on fewer
+prompt = "judge_v1"         # prompts/judge_v1.md
+max_output_tokens = 600
+reasoning_effort = ""       # e.g. "low" for a reasoning judge model; "" sends nothing
+timeout_s = 30
+rpm = 20                    # pacing for the free tier; 429s back off as in [answers]
 
 [bm25_trigger]
 min_gap_points = 3.0
@@ -167,6 +233,27 @@ seed = 7
 
 [latency]
 p95_target_s = 15.0
+query_count = 30   # the first 30 questions of the set, by id
+warmup = 2         # requests run first, not counted
+
+# nyaya-eval answers (Phase 3)
+[answers]
+min_supported_share = 0.90             # G2
+min_unanswerable_refused_share = 0.80  # G5 (the wrong-refusal limit is refusal.max_wrong_refusal_share)
+llm_rpm = 20             # answer-LLM pacing for the free tier
+rate_limit_retries = 6   # 429 retries before the run stops (resume later)
+backoff_base_s = 5.0     # doubled per retry; a Retry-After header can lengthen it
+backoff_max_s = 120.0
+
+[ragas]
+# nyaya-eval ragas: LLM-judged RAGAS metrics beside our own (never a gate).
+# The LLM is the judge (JUDGE_*), paced to judge.rpm with the [answers] backoff.
+max_output_tokens = 2048  # statement lists for long answers need more than judge.max_output_tokens
+max_contexts = 8          # retrieved passages per question, in rank order (retrieval.final_k)
+answer_relevancy = true   # false skips it, and no embedding model is loaded
+strictness = 3            # questions generated per answer for answer relevancy
+embed_model = "sentence-transformers/all-MiniLM-L6-v2"  # small, CPU-friendly
+embed_device = "cpu"      # never the GPU: the build may be using it
 
 [lawyer]
 sample_size = 30

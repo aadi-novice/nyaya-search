@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from nyaya.chunk.chunker import count_words, find_paragraphs
+from nyaya.chunk.chunker import count_words, find_paragraphs, paragraph_rules
 from nyaya.config import Settings
 from nyaya.contracts import ChunkRecord, Opinion, ParsedDoc, Zone, Zones
 
@@ -50,13 +50,17 @@ def paragraph_integrity(
     opinions: list[Opinion],
     chunks: list[ChunkRecord],
     max_words: int,
+    rules: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
-    """(intact, total) numbered judgment paragraphs, leaving out over-long ones."""
+    """(intact, total) numbered judgment paragraphs, leaving out over-long ones.
+
+    `rules` are find_paragraphs keyword arguments (`paragraph_rules`), as the
+    chunker uses them."""
     text = parsed.clean_text
     jc = [(c.char_start, c.char_end) for c in chunks if c.zone is Zone.JUDGMENT]
     intact = total = 0
     for s, e in _spans(zones, opinions):
-        for p in find_paragraphs(text, s, e):
+        for p in find_paragraphs(text, s, e, **(rules or {})):
             if count_words(text[p.start : p.end]) > max_words:
                 continue
             total += 1
@@ -112,7 +116,9 @@ def doc_metrics(
 ) -> dict[str, Any]:
     """Raw counts for one judgment; add them up with summarize()."""
     cfg = settings.chunk
-    intact, total = paragraph_integrity(parsed, zones, opinions, chunks, cfg.max_words)
+    intact, total = paragraph_integrity(
+        parsed, zones, opinions, chunks, cfg.max_words, paragraph_rules(parsed, settings)
+    )
     size = size_compliance(zones, opinions, chunks, cfg.min_words, cfg.max_words)
     words = [count_words(c.text) for c in chunks if c.zone is Zone.JUDGMENT]
     other = [count_words(c.text) for c in chunks if c.zone is not Zone.JUDGMENT]
