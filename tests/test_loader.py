@@ -484,3 +484,12 @@ def test_activate_first_version_deletes_nothing():
     conn = FakeConn(responder)
     assert ld.activate(conn, "v1") == {"active": "v1", "retired": [], "deleted": []}
     assert not any(sql.startswith("DELETE") for sql, _ in conn.executed)
+
+
+def test_judgment_rows_turn_float_integers_back_into_int():
+    # a year with a no-PDF row stores pages, offsets and sizes as float64
+    df = judgment_df(["p", "q"], pages=[7.0, float("nan")], offset_data=[512.0, float("nan")])
+    rows = ld.judgment_rows(df)
+    assert rows[0]["pages"] == 7 and isinstance(rows[0]["pages"], int)
+    assert isinstance(rows[0]["offset_data"], int)
+    assert rows[1]["pages"] is None and rows[1]["offset_data"] is None
