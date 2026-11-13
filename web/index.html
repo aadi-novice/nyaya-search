@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyaya Search</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="/">Nyaya Search</a>
+    <span class="tagline">Supreme Court of India judgments, with checked citations</span>
+  </header>
+
+  <main>
+    <section id="notices" class="notices" aria-label="Notices">
+      <ul id="notice-list"></ul>
+    </section>
+
+    <section id="ask-view">
+      <form id="ask-form" autocomplete="off">
+        <label for="question" class="visually-hidden">Question</label>
+        <textarea id="question" name="question" rows="3" required
+          placeholder="Ask a research question, or type a citation such as 2025 INSC 31"></textarea>
+
+        <details id="filters" class="filters">
+          <summary>Filters</summary>
+          <div class="filter-grid">
+            <label>Year from
+              <input id="year_from" name="year_from" type="number" min="1950" max="2100" step="1">
+            </label>
+            <label>Year to
+              <input id="year_to" name="year_to" type="number" min="1950" max="2100" step="1">
+            </label>
+            <label>Judge
+              <input id="judge" name="judge" type="text" placeholder="e.g. Abhay S. Oka">
+            </label>
+            <label>Act
+              <input id="act" name="act" type="text" placeholder="e.g. Code of Criminal Procedure">
+            </label>
+            <label>Outcome
+              <select id="outcome" name="outcome">
+                <option value="">Any</option>
+                <option value="allowed">Allowed</option>
+                <option value="dismissed">Dismissed</option>
+                <option value="disposed">Disposed of</option>
+                <option value="directions">Directions</option>
+                <option value="referred">Referred</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+          </div>
+        </details>
+
+        <div class="actions">
+          <button id="submit" type="submit">Search</button>
+          <span id="progress" class="progress" role="status" aria-live="polite" hidden>
+            <span class="spinner" aria-hidden="true"></span>
+            <span id="progress-text">Searching</span>
+          </span>
+        </div>
+      </form>
+
+      <p id="form-error" class="form-error" role="alert" hidden></p>
+      <section id="result" aria-live="polite"></section>
+    </section>
+
+    <section id="judgment-view" hidden>
+      <p><a href="/">Back to search</a></p>
+      <div id="judgment"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

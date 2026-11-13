@@ -41,7 +41,7 @@ def test_repo_settings_load(repo_root):
     assert s.quote.min_words == 8 and s.quote.max_words == 40
     assert len(s.notices) == 4
     assert list(s.opinion.phrases) == ["dissenting", "concurring"]
-    assert s.era_markers.d.min_count == 3 and len(s.era_markers.d.labels) == 5
+    assert s.era_markers.d.min_count == 2 and len(s.era_markers.d.labels) == 5
     assert s.outcome_map.default == "other"
     assert "Appeal(s) allowed" in s.outcome_map.values["allowed"]
 

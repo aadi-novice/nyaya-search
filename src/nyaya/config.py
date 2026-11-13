@@ -133,6 +133,12 @@ class Rerank(_Section):
     fallback_model: str
 
 
+class Encoders(_Section):
+    rerank_batch_size: int = Field(ge=1)
+    embed_batch_size: int = Field(ge=1)
+    max_tokens: int = Field(ge=1)
+
+
 class Retrieval(_Section):
     keyword_k: int
     vector_k: int
@@ -153,6 +159,8 @@ class Refusal(_Section):
 class Llm(_Section):
     max_input_tokens: int
     max_output_tokens: int
+    # sent as `reasoning_effort` to reasoning models (gpt-oss); "" sends nothing
+    reasoning_effort: str = ""
     repair_min_seconds_left: int
 
 
@@ -252,6 +260,7 @@ class Settings(_Section):
     quote: Quote
     embed: Embed
     rerank: Rerank
+    encoders: Encoders
     retrieval: Retrieval
     refusal: Refusal
     llm: Llm

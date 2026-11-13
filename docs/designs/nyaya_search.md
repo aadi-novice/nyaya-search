@@ -456,8 +456,30 @@ test.
 
     | Result | Rule (`era_markers.*` in config) |
     | --- | --- |
-    | **Era D (2024+)** | at least 3 of: `Issue for Consideration`, `Headnotes`, `Case Law Cited`, `List of Acts`, `List of Keywords` |
-    | **Era C (2010–2023)** | not Era D, **and** at least 5 lines matching `^\s*[A-H]\s*$`, **and** `HELD\s*:` present, **and** the decision year is 2010–2023 |
+    | **Era D (late 2023+)** | at least 2 of: `Issue for Consideration`, `Headnotes`, `Case Law Cited`, `List of Acts`, `List of Keywords` |
+    | **Era C (2010–2023)** | not Era D, **and** at least 3 lines matching `^\s*[A-H]\s*$`, **and** `HELD\s*:` present, **and** the decision year is 2010–2023 |
+
+    **Thresholds lowered 2026-11-13 (Phase 1 integration, measured on 80
+    judgments per decision year, 2010–2026):** with "at least 3" labels,
+    12–36% of 2023–2026 judgments were out of scope. Long headnotes push
+    `Case Law Cited` and the lists past page 3, and the late-2023 "CASE
+    DETAILS" volumes print only "Issue for consideration" and "HEADNOTES"
+    (with "Held:" points and "JUDGMENT / ORDER OF THE SUPREME COURT", so
+    the Era D zoner handles them). No 2010–2023 Era C judgment in the
+    sample showed any label, so 2 cannot pull Era C in. With "at least 5"
+    margin lines, 15% of the 2015 sample was out of scope: OCR joins some
+    margin letters to the body line, leaving 3–4 lone letters. After both
+    changes 1.2% of the sample is out of scope (mostly short orders with no
+    "HELD:").
+
+    **Era D head band (clean_text `ct2`, 2026-11-13):** the "CASE DETAILS"
+    volumes print their running head ("1006 SUPREME COURT REPORTS [2023] 11
+    S.C.R." and the two-line case title) at about 0.16 of the page height,
+    below Era D's fixed top band (0–0.115), so it leaked into 2023 Held text
+    (175 of 2,808 2023 Held chunks had "SUPREME COURT REPORTS"). The Era D
+    top band is now 0–0.17. On 100 Era D judgments from 2023–2026, every
+    line this removed was a running head, a head continuation or a page
+    number.
     | **out_of_scope** | anything else, logged to `build/skipped.csv` with reason `era_out_of_scope` |
 *   **Furniture removal.** Extract words with their bounding boxes, then
     remove three kinds of furniture **by position**, before words are joined
@@ -529,7 +551,11 @@ zone then falls back to the whole clean text, and the document is flagged
     match of
     `(?:The\s+)?([A-Z][A-Za-z().&'’\- ]{2,120}?(?:Act|Code|Rules|Regulations|Ordinance|Order|Adhiniyam|Sanhita))\s*[,;]\s*(\d{4})`
     (case-insensitive, to catch "BOMBAY POLICE ACT, 1951"). The ";" covers
-    the OCR form "Penal Code; 1860".
+    the OCR form "Penal Code; 1860". As built (`zone/zoner.py`), the regex
+    also accepts "." as an OCR form of the comma, puts word boundaries
+    around the keyword ("contract, 1990" is not an Act), and has a second
+    alternative for "Code of Criminal Procedure" and "Code of Civil
+    Procedure", whose names do not end in a keyword.
 *   **Acts without a year,** matched from the list `acts.no_year_allowlist`
     in config: "Constitution of India" (also "Constitution" followed by
     "Art."/"Arts.").
@@ -616,8 +642,10 @@ zone then falls back to the whole clean text, and the document is flagged
 *   **Aliases** map each citation form of a judgment to its `path`. The
     canonical forms (produced by `canonical_citation()`, file 24) are:
     *   SCR: `scr:2025:1:230` for `[2025] 1 S.C.R. 230` or `2025 (1) SCR 230`;
-    *   SCR Supplement: `scr:2005:s6:72` for `[2006] SUPP. 6 S.C.R. 72`
-        style citations. Supplement paths (`S_…`) all date from before
+    *   SCR Supplement: `scr:2006:s6:72` for `[2006] SUPP. 6 S.C.R. 72`
+        style citations. The year is the one printed in the citation, which
+        is what a reader types and what `S_` paths carry (corrected
+        2026-11-13; an earlier draft paired two different years). Supplement paths (`S_…`) all date from before
         2010 (none from 2010 on, measured), but the form keeps them
         distinct from regular volumes when older eras are added;
     *   neutral: `insc:2025:31` for `2025 INSC 31` and `2025INSC31` (the
@@ -856,8 +884,8 @@ to.
 
 *   An added chunk is ranked at its parent's rank plus
     `retrieval.expand_rank_offset` (0.5).
-*   The fused list is cut to `retrieval.rerank_candidates` (100) **after**
-    expansion. This cap is the only limit on reranker input.
+*   The fused list is cut to `retrieval.rerank_candidates` (50; 100 until
+    2026-11-13, see Open Questions) **after** expansion. This cap is the only limit on reranker input.
 
 **Reranking.**
 
@@ -934,6 +962,11 @@ to.
         A name matches a passage if both sides, after `normalize_text()`,
         are contained in that passage's normalised `title`. A name matching
         no passage is a rule break (`uncited_case_name`).
+    *   A citation pattern in the sentence that resolves to no passage's
+        judgment also makes the sentence unverified with reason
+        `uncited_case_name`: both mean the sentence names a case the
+        passages do not support. The trace logs that rule break as
+        `uncited_citation`, with the canonical citation.
 
     Party names alone are not checked, because names such as "Union of
     India" appear in thousands of judgments.
@@ -1397,6 +1430,31 @@ to.
         G2 requires.
     *   **Still open:** whether Groq's daily token limit covers one judge
         run. If it does not, the run is split across days.
+    *   **Changed 2026-11-13 (author delegated the decision):** the Gemini
+        key's project returned HTTP 402 (prepaid credits depleted), so
+        answers use `openai/gpt-oss-120b` on Groq and the judge uses
+        `qwen/qwen3.8-27b` on Groq (Qwen family, still different from the
+        answer model). Gemini Flash returns once a free-tier key is
+        available; only `.env` changes.
+*   **Rerank latency (decided 2026-11-13, Phase 1 integration):** reranking
+    100 candidates took about 7.4 s on the RTX 2060 (6 GB) in the
+    store-search work, against a 15 s answer target. Decision:
+    `retrieval.rerank_candidates` 100 → 50; `encoders.rerank_batch_size` = 4
+    (a setting now); the reranker loads with `attn_implementation="sdpa"`.
+    *   **Measured 2026-11-13** on 100 real 2025 judgment chunks (median of
+        3 runs, batch 4): sdpa 6.9 s for 50 and 14.2 s for 100; eager
+        attention 10.3 s and 15.9 s. In the pipeline, with the embedder
+        also loaded, 50 candidates took 15–34 s: the reranker computed
+        logits for every position over the 151k-word vocabulary (about 1 GB
+        per batch), which pushed VRAM past 6 GB into Windows' shared-memory
+        fallback.
+    *   **Fix (same day):** the forward pass now asks for the last position
+        only (`logits_to_keep=1`). Re-measured: sdpa 4.3 s for 50 and 8.4 s
+        for 100 (peak 1.6–1.7 GB); eager 6.5 s and 12.6 s. Sdpa is kept. In
+        the pipeline, reranking 50 candidates takes 4.0–5.1 s.
+    *   **Still open:** whether recall@50 drops when the reranker sees 50
+        instead of 100 candidates; `nyaya-eval retrieval` on `dev_v1`
+        (Phase 2) answers it, and G7 latency is measured in Phase 3.
 
 --------------------------------------------------------------------------------
 
@@ -1542,20 +1600,21 @@ to.
 | `calibrate.sample_size`, `calibrate.min_era_c`, `calibrate.seed` | int | 50, 40, 42 |
 | `bands.era_c.left_x`, `bands.era_c.right_x`, `bands.top_y`, `bands.bottom_y` | [float, float] | defaults empty; filled from `build/bands.json` by `load_settings()` |
 | `running_head_patterns` | [str] | `SUPREME COURT REPORTS`, `Digital Supreme Court Reports` |
-| `era_markers.d` | [str], int | the 5 labels in Technical Plan step 3; minimum 3 |
-| `era_markers.c` | table | margin-letter line regex `^\s*[A-H]\s*$` with minimum 5 lines; `HELD\s*:` required; years 2010–2023 |
+| `era_markers.d` | [str], int | the 5 labels in Technical Plan step 3; minimum 2 (was 3; changed 2026-11-13, step 3) |
+| `era_markers.c` | table | margin-letter line regex `^\s*[A-H]\s*$` with minimum 3 lines (was 5; changed 2026-11-13, step 3); `HELD\s*:` required; years 2010–2023 |
 | `chunk.target_words`, `chunk.min_words`, `chunk.max_words` | int | 400, 80, 700 |
 | `chunk.abbreviations` | [str] | J., JJ., v., vs., Ors., Anr., No., Sr., Adv., i.e., e.g., viz., s., ss., r., rr., Art., Arts., para., paras. |
-| `opinion.phrases`, `opinion.phrase_window_chars` | ordered table, int | dissenting, then concurring phrase lists; 300 |
+| `opinion.phrases`, `opinion.phrase_window_chars` | ordered table, int | dissenting (including "unable to agree" and "beg to differ", added 2026-11-13), then concurring phrase lists; 300 |
 | `acts.alias_file`, `acts.no_year_allowlist` | str, [str] | `config/act_aliases.toml`; `Constitution of India` |
 | `quote.min_words`, `quote.max_words` | int | 8, 40 |
-| `embed.model`, `embed.revision`, `embed.dim`, `embed.query_prefix` | str/int | `Qwen/Qwen3-Embedding-0.6B`; the Hugging Face commit hash, pinned at Phase 1 setup and recorded here; 1024; prefix in Technical Plan step 7 |
-| `rerank.model`, `rerank.revision`, `rerank.instruction`, `rerank.fallback_model` | str | `Qwen/Qwen3-Reranker-0.6B`; commit hash pinned at Phase 1 setup; instruction in Query pipeline "Reranking"; `cohere/rerank-5-fast` |
-| `retrieval.keyword_k`, `retrieval.vector_k`, `retrieval.rrf_k`, `retrieval.rerank_candidates`, `retrieval.final_k`, `retrieval.ef_search` | int | 50, 50, 60, 100, 8, 100 |
+| `embed.model`, `embed.revision`, `embed.dim`, `embed.query_prefix` | str/int | `Qwen/Qwen3-Embedding-0.6B`; commit `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` (pinned 2026-11-13); 1024; prefix in Technical Plan step 7 |
+| `rerank.model`, `rerank.revision`, `rerank.instruction`, `rerank.fallback_model` | str | `Qwen/Qwen3-Reranker-0.6B`; commit `e61197ed45024b0ed8a2d74b80b4d909f1255473` (pinned 2026-11-13); instruction in Query pipeline "Reranking"; `cohere/rerank-5-fast` |
+| `retrieval.keyword_k`, `retrieval.vector_k`, `retrieval.rrf_k`, `retrieval.rerank_candidates`, `retrieval.final_k`, `retrieval.ef_search` | int | 50, 50, 60, 50 (was 100; changed 2026-11-13, see Open Questions), 8, 100 |
+| `encoders.rerank_batch_size`, `encoders.embed_batch_size`, `encoders.max_tokens` | int | 4 (pairs per reranker pass, inside 6 GB VRAM), 16 (chunks per embedder pass; the build also caps a pass at 16 × 1,024 tokens), 8000 (the G6 `over_model_limit` token limit); added 2026-11-13 |
 | `retrieval.expand_rank_offset`, `retrieval.lookup_max_editorial` | float, int | 0.5, 3 |
 | `refusal.threshold_qwen`, `refusal.threshold_cohere` | float | 0.35, 0.20 (seed values only; the gate reads `index_versions`) |
 | `refusal.max_wrong_refusal_share` | float | 0.10 |
-| `llm.max_input_tokens`, `llm.max_output_tokens`, `llm.repair_min_seconds_left` | int | 6000, 800, 4 |
+| `llm.max_input_tokens`, `llm.max_output_tokens`, `llm.repair_min_seconds_left`, `llm.reasoning_effort` | int, str | 6000, 1200 (was 800), 4, `low` (sent only when not empty). Changed 2026-11-13: at its default effort gpt-oss-120b on Groq spent the 800 tokens on reasoning and Groq rejected the cut-off JSON with HTTP 400; at `low` a real prompt used 366–763 completion tokens |
 | `timeouts.request_s`, `timeouts.llm_s`, `timeouts.answer_deadline_s` | int | 30, 12, 15 |
 | `load.smoke_min_hits` | int | 8 (of the 10 smoke questions) |
 | `g6.min_paragraph_integrity`, `g6.min_size_compliance`, `g6.holdout_size`, `g6.holdout_seed` | float/int | 0.98, 0.99, 50, 4242 |
@@ -1682,7 +1741,7 @@ to.
         `filters` JSONB; `versions` JSONB; `retrieved` JSONB;
         `rows_returned` JSONB; `top_score`; `threshold`; `status`;
         `rule_breaks` JSONB; `unverified_count`; `gaps_count`;
-        `reranker_fallback_used`; `llm_error`; `timings_ms` JSONB.
+        `reranker_fallback_used`; `llm_error`; `timings_ms` JSONB; `error` (why an `error` response failed, added by `db/migrations/002_trace_error.sql` on 2026-11-13).
     *   **`eval_runs`:** `run_id`; `created_at`; `dataset_version`;
         `index_version` or `schema_name`; `config` JSONB; `metrics` JSONB.
     *   **Indexes:**
@@ -1850,6 +1909,27 @@ to.
     *   **No paragraph numbers:** falls back to blank-line paragraphs.
     *   **Fields:** `section_label` from headings in capitals; pages from
         the position map; the header from metadata.
+    *   **Changed 2026-11-13 (chunker `ch3`):**
+        *   **Paragraph numbers** are the longest in-order sequence of
+            numbered lines (each step +1, a sub-paragraph, or a skip of at
+            most 10), not the first acceptable line each time. Taken
+            greedily, a numbered paragraph quoted from another judgment
+            ("22." inside para 12) captured the label of every later
+            paragraph: in `p1-2025a` (`ch1`), 362 of 896 judgments had fewer
+            distinct paragraph labels than their highest label, 95 of them
+            missing over 20%. A numbered line outside the chosen sequence
+            stays body text of the paragraph it sits in.
+        *   **A Held point over `chunk.max_words`** is split at sentence
+            boundaries like a long paragraph (flag `recursive_split`); every
+            piece keeps the point's `para_refs`. Some Era C headnotes run to
+            thousands of words (one to 150,000 when the judgment start was
+            not found), which failed `over_model_limit`.
+        *   **`ch4`:** a paragraph number may follow OCR specks and a lone
+            margin letter at the line start ("· 11.", ".. . 55.", "·A 25.").
+            On 2014 this cut judgments with label gaps from 376 to 279 of
+            781 (whole-text estimate). Many remaining Era C gaps are OCR
+            damage to the number itself; most remaining Era D gaps are
+            judgments that print "Leave granted." without a "1.".
 
 #### 23. `src/nyaya/chunk/metrics.py` (Create, Phase 1)
 
@@ -1876,7 +1956,7 @@ to.
             2010–2026.
     *   **`canonical_citation(s)`** turns each form into one canonical
         string, matching the forms in Technical Plan step 6:
-        `scr:2025:1:230`, `scr:2005:s6:72` (Supplement), `insc:2025:31`,
+        `scr:2025:1:230`, `scr:2006:s6:72` (Supplement, printed year), `insc:2025:31`,
         `scc:2009:8:751`, `air:1999:3750`, `cnr:escr010004242025`.
         `nc_display` values have no spaces (`2025INSC719`), and the pattern
         accepts both forms.
@@ -1916,6 +1996,32 @@ to.
             `build.max_error_share` of judgments.
     *   **`embed`** writes `build/vectors/<year>.npy` and
         `build/vectors/<year>.ids.txt`.
+    *   **As built (2026-11-13):**
+        *   Years are **decision** years. `judgments/<year>.parquet` holds
+            every manifest row of that year: rows without a PDF, out-of-scope
+            rows (`era = out_of_scope`) and rows whose parse failed, all with
+            null text, so metadata lookups still work.
+        *   `aliases.parquet`, `chunk_metrics.json`, `link_summary.json`,
+            `skipped.csv`, `errors.jsonl` and `act_names_unmapped.csv` are
+            rebuilt over all built years after each `parse-chunk`, from
+            per-year files in `build/logs/`. `load --years` rebuilds them
+            over the years it loads, so the G6 check matches what is loaded.
+        *   **Resume:** a year is skipped when `build/state/parse_<year>.json`
+            records the same clean_text, chunker and config versions, or
+            when `build/state/embed_<year>.json` records the same model,
+            revision and chunk IDs. A year's files are written only after
+            the whole year succeeds. `--force` redoes a year.
+        *   **`run --years Y --version V`** runs every stage in order,
+            skipping finished work: manifest, calibrate, parse-chunk, embed,
+            load (unless `V` exists), activate.
+        *   **`parse-chunk --workers N`** uses a process pool. Measured on
+            2025, one process takes about 0.1 s per judgment, so the default
+            stays 1.
+        *   **`embed`** sorts chunks by token length and batches them so that
+            batch size × longest length stays within
+            `encoders.embed_batch_size` × 1,024 tokens, which keeps peak VRAM
+            flat. It logs progress and peak VRAM.
+        *   The G6 gate also fails when tokens were not counted.
 
 #### 27. `src/nyaya/models/encoders.py` (Create, Phase 1)
 
@@ -2075,6 +2181,27 @@ to.
         *   **Timings:** every stage is timed.
     *   **`write_trace(...)`** inserts one row per request. A write failure
         is logged and never fails the request.
+    *   **As built (2026-11-13):**
+        *   **`build_deps(settings)`** loads the embedder, the local reranker
+            (if it fails to load, every request uses the fallback), the
+            optional Cohere fallback and the LLM client once, reads the
+            active version and its thresholds, and returns `Deps` with
+            `health()` and `versions()`.
+        *   **Concurrency:** the API answers in a thread pool, so the engine
+            gives each worker thread its own Postgres connection, opened on
+            first use (no pool library). GPU calls (query embedding,
+            reranking) are serialised by one lock to stay inside 6 GB.
+        *   **Act filter:** the engine maps the filter value with the
+            zoner's normaliser (`normalize_text`, then
+            `config/act_aliases.toml`).
+        *   **Invalid filters:** an unknown outcome value raises
+            `InvalidFilter`; `ask` returns `error` with the reason in
+            `passages_note`, never an HTTP 500.
+        *   **Errors are traced** in the `error` column.
+        *   **Known gap:** a request that hits the API timeout keeps running
+            in its worker thread and writes its own trace when it ends, so
+            such a request can leave two rows (the API's `error` row and the
+            pipeline's row), with different request IDs.
 
 #### 37. `src/nyaya/api/app.py` (Create, Phase 1)
 

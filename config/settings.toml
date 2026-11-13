@@ -19,8 +19,8 @@ metadata_root = "docs/metadata/parquet"
 build = "build"
 
 [versions]
-clean_text = "ct1"
-chunker = "ch1"
+clean_text = "ct2"  # ct2 (2026-11-13): Era D head band 0.17 for late-2023 volumes
+chunker = "ch4"  # ch4 (2026-11-13): OCR specks before paragraph numbers; ch3: longest in-order paragraph sequence, long Held points split; ch2: Era C title-case Held
 config = "cfg1"
 prompt = "answer_v1"
 
@@ -46,11 +46,18 @@ labels = [
     "List of Acts",
     "List of Keywords",
 ]
-min_count = 3
+# 2 (was 3), 2026-11-13: long 2024-2026 headnotes push the last three labels
+# past page 3, and the late-2023 "CASE DETAILS" volumes print only "Issue for
+# consideration" and "HEADNOTES". In an 80-per-year sample no 2010-2023 Era C
+# judgment showed any label, so 2 cannot pull in Era C.
+min_count = 2
 
 [era_markers.c]
 margin_line_regex = '^\s*[A-H]\s*$'
-min_margin_lines = 5
+# 3 (was 5), 2026-11-13: OCR of some 2010-2016 scans joins margin letters to
+# the body line, leaving 3-4 lone letters on the first pages (15% of a 2015
+# sample). HELD and the year window still have to match.
+min_margin_lines = 3
 held_regex = 'HELD\s*:'
 year_from = 2010
 year_to = 2023
@@ -69,7 +76,7 @@ phrase_window_chars = 300
 
 # Priority order: dissenting first, then concurring.
 [opinion.phrases]
-dissenting = ["I regret I am unable to agree", "dissent"]
+dissenting = ["I regret I am unable to agree", "unable to agree", "beg to differ", "dissent"]
 concurring = ["I agree", "concurring"]
 
 [acts]
@@ -82,21 +89,27 @@ max_words = 40
 
 [embed]
 model = "Qwen/Qwen3-Embedding-0.6B"
-revision = ""  # Hugging Face commit hash, pinned at Phase 1 setup
+revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"  # Hugging Face commit, pinned 2026-11-13
 dim = 1024
 query_prefix = "Instruct: Given a legal research question, retrieve Supreme Court judgment passages that answer it\nQuery: "
 
 [rerank]
 model = "Qwen/Qwen3-Reranker-0.6B"
-revision = ""  # Hugging Face commit hash, pinned at Phase 1 setup
+revision = "e61197ed45024b0ed8a2d74b80b4d909f1255473"  # Hugging Face commit, pinned 2026-11-13
 instruction = "Given a legal research question, judge whether this Supreme Court judgment passage helps answer it"
 fallback_model = "cohere/rerank-5-fast"
+
+# Local encoder run-time settings (RTX 2060, 6 GB).
+[encoders]
+rerank_batch_size = 4     # pairs per reranker forward pass; keeps long chunks inside 6 GB VRAM
+embed_batch_size = 16     # chunks per embedder forward pass during nyaya-build embed
+max_tokens = 8000         # G6 over_model_limit: embedded text longer than this fails the gate
 
 [retrieval]
 keyword_k = 50
 vector_k = 50
 rrf_k = 60
-rerank_candidates = 100
+rerank_candidates = 50  # 100 took ~7.4 s on the RTX 2060 (decision 2026-11-13)
 final_k = 8
 ef_search = 100
 expand_rank_offset = 0.5
@@ -110,7 +123,12 @@ max_wrong_refusal_share = 0.10
 
 [llm]
 max_input_tokens = 6000
-max_output_tokens = 800
+# 1200 (was 800) and reasoning effort "low", 2026-11-13: gpt-oss-120b on Groq
+# spends its budget on reasoning at the default effort, and Groq then rejects
+# the cut-off JSON (HTTP 400 "Failed to validate JSON"). Measured on a real
+# prompt: low effort used 366-763 completion tokens (97-461 of them reasoning).
+max_output_tokens = 1200
+reasoning_effort = "low"
 repair_min_seconds_left = 4
 
 [timeouts]

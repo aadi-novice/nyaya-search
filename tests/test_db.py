@@ -61,7 +61,7 @@ def conn():
 def test_apply_migrations_creates_schema_and_is_idempotent(conn):
     connection, schema = conn
     applied = db.apply_migrations(connection)
-    assert applied == ["001_schema.sql"]
+    assert applied == ["001_schema.sql", "002_trace_error.sql"]
     tables = {
         r[0]
         for r in connection.execute(
@@ -78,7 +78,7 @@ def test_apply_migrations_creates_schema_and_is_idempotent(conn):
     # second run applies nothing
     assert db.apply_migrations(connection) == []
     recorded = [r[0] for r in connection.execute("SELECT filename FROM schema_migrations")]
-    assert recorded == ["001_schema.sql"]
+    assert recorded == ["001_schema.sql", "002_trace_error.sql"]
 
 
 def test_generated_tsv_and_cascade(conn):
