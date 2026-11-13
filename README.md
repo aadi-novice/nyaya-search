@@ -4,9 +4,7 @@
 
 Nyaya Search answers a lawyer's research question from the 2010–2026 judgments of the Supreme Court of India. Each sentence of an answer cites a retrieved passage and quotes it word for word, and a citation check written in code confirms that each quote really is in that passage before the sentence is shown. A sentence that fails the check is hidden, and its case name and citation are never shown. When the evidence is too weak, the system refuses ("no relevant judgment found") instead of guessing. It runs on one PC with a 6 GB GPU, using free tools: PostgreSQL with pgvector, local Qwen3 embedding and reranking models, and a free hosted LLM.
 
-<!-- Screenshot or GIF of the page: save it as docs/img/nyaya-search.png and uncomment the next line.
 ![Nyaya Search: a cited answer beside its ranked source passages](docs/img/nyaya-search.png)
--->
 
 ## What a lawyer sees
 
