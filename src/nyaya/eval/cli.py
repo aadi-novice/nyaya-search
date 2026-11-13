@@ -14,6 +14,8 @@ Subcommands and the phase in which each is first needed:
     judge-validate  Phase 3   Cohen's kappa of the judge against the hand labels
     lawyer-export   Phase 3   a seeded sample of answers to CSV and HTML
     lawyer-import   Phase 3   the lawyer's ratings into eval_runs (never a gate)
+    ragas           Phase 5   RAGAS metrics over an answers run, beside ours (never a
+                              gate; needs the `ragas` extra; resumable)
 
 Exit codes: 0 success; 1 a gate failed (size-steps, answers, latency,
 judge-validate); 2 usage or setup error (g6-holdout: also fewer in-scope PDFs
@@ -118,6 +120,22 @@ def build_parser() -> argparse.ArgumentParser:
     li = sub.add_parser("lawyer-import", help="the lawyer's ratings into eval_runs (Phase 3)")
     li.add_argument("--run-id", default=None, help="the answers run (default: the latest)")
     li.add_argument("--csv", type=Path, default=None, help="default: <export dir>/ratings.csv")
+
+    rg = sub.add_parser("ragas", help="RAGAS metrics over an answers run (never a gate)")
+    rg.add_argument("--run-id", default=None, help="the answers run (default: the latest)")
+    rg.add_argument(
+        "--results", type=Path, default=None, help="an answers results.jsonl (instead of --run-id)"
+    )
+    rg.add_argument(
+        "--references",
+        type=Path,
+        default=None,
+        help="Held text per question id (default: <dev set>_handcheck.csv)",
+    )
+    rg.add_argument("--limit", type=int, default=None, help="at most N new questions this session")
+    rg.add_argument(
+        "--no-relevancy", action="store_true", help="skip answer relevancy (no embedding model)"
+    )
     return p
 
 
@@ -616,6 +634,118 @@ def cmd_lawyer_import(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def cmd_ragas(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import UTC, datetime
+
+    from nyaya.eval import ragas_metrics as R
+    from nyaya.eval.answers import ResultsFile
+    from nyaya.eval.runs import save_run
+
+    if R.ragas_version() is None:
+        raise RuntimeError("ragas is not installed: uv sync --extra eval --extra ragas")
+    if args.results is not None:
+        if not args.results.exists():
+            raise FileNotFoundError(f"answers results not found: {args.results}")
+        answers = ResultsFile(args.results.parent.name, args.results.parent.parent)
+        answers.path = args.results
+        records = list(answers.load().values())
+    else:
+        answers, records = _answers_run(args.run_id)
+    if not records:
+        raise ValueError(f"answers run {answers.run_id} has no finished questions")
+    meta = answers.read_meta()
+    dev_stem = meta.get("datasets", {}).get("dev")
+    references = R.read_references(args.references or R.default_references(dev_stem))
+
+    cfg = settings.ragas
+    use_relevancy = cfg.answer_relevancy and not args.no_relevancy
+    fetch = R.DbContexts(settings)
+    try:
+        samples = R.build_samples(
+            records, references, max_contexts=cfg.max_contexts, fetch_contexts=fetch
+        )
+    finally:
+        fetch.close()
+    if not samples:
+        raise ValueError(f"answers run {answers.run_id} has no dev-set questions")
+
+    llm, limited = R.make_llm(settings)
+    embeddings = R.make_embeddings(settings) if use_relevancy else None
+    metrics = R.make_metrics(llm, embeddings, cfg.strictness)
+    run_config = {
+        "answers_run": answers.run_id,
+        "ragas_version": R.ragas_version(),
+        "llm_model": getattr(llm, "model", None),
+        "embed_model": cfg.embed_model if use_relevancy else None,
+        "metrics": list(metrics),
+        "max_contexts": cfg.max_contexts,
+        "strictness": cfg.strictness,
+    }
+    results = ResultsFile(answers.run_id, R.RAGAS_DIR)
+    old = results.read_meta()
+    if old and old.get("config") != run_config:
+        raise ValueError(
+            f"{results.dir} was scored with {old.get('config')}; move it away to score "
+            "again with these settings"
+        )
+    sessions = old.get("sessions", [])
+    results.write_meta({"config": run_config, "sessions": sessions})
+    started = datetime.now(UTC)
+    progress = R.run_session(samples, metrics, results, limit=args.limit, log=_log)
+    sessions.append(
+        {
+            "started_at": started.isoformat(),
+            "tokens": dict(getattr(limited, "tokens", {}) or {}),
+            "calls": getattr(limited, "calls", 0),
+            "rate_limited": getattr(limited, "rate_limited", 0),
+            "progress": progress.as_dict(),
+        }
+    )
+    results.write_meta({"config": run_config, "sessions": sessions})
+
+    wanted = {s.id for s in samples}
+    rows = [r for k, r in results.load().items() if k in wanted]
+    ragas = R.aggregate(rows, list(metrics))
+    ours = R.our_metrics(
+        records,
+        min_supported_share=settings.answers.min_supported_share,
+        min_unanswerable_refused_share=settings.answers.min_unanswerable_refused_share,
+        max_wrong_refusal_share=settings.refusal.max_wrong_refusal_share,
+    )
+    table = R.markdown_table(ours, ragas)
+    report = {
+        "complete": progress.remaining == 0,
+        "progress": progress.as_dict(),
+        "ragas": ragas,
+        "ours": ours,
+        "per_question": sorted(rows, key=lambda r: r["id"]),
+        "table_md": table,
+    }
+    run_id, path = save_run(
+        "ragas",
+        report,
+        config={**run_config, "references": str(args.references or "default")},
+        dataset_version=dev_stem,
+        index_version=meta.get("index_version"),
+        run_id=f"ragas-{answers.run_id}",
+    )
+    md = path.with_suffix(".md")
+    md.write_text(table, encoding="utf-8", newline="\n")
+    out: dict[str, Any] = {
+        "run_id": run_id,
+        "file": str(path),
+        "table": str(md),
+        "progress": progress.as_dict(),
+        "refusals": ragas["refusals"],
+        "means": {k: v["mean"] for k, v in ragas["metrics"].items()},
+        "gate": False,
+    }
+    if progress.remaining > 0:
+        out["note"] = f"{progress.remaining} questions left; run the same command to resume"
+    _print(out)
+    return 0
+
+
 COMMANDS = {
     "build-devset": cmd_build_devset,
     "g6-holdout": cmd_g6_holdout,
@@ -628,6 +758,7 @@ COMMANDS = {
     "judge-validate": cmd_judge_validate,
     "lawyer-export": cmd_lawyer_export,
     "lawyer-import": cmd_lawyer_import,
+    "ragas": cmd_ragas,
 }
 
 

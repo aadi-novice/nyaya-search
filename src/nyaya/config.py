@@ -268,6 +268,23 @@ class AnswersCfg(_Section):
     backoff_max_s: float = Field(default=120.0, ge=0)
 
 
+class RagasCfg(_Section):
+    """`nyaya-eval ragas`: RAGAS metrics beside our own (never a gate).
+
+    The LLM is the judge (`JUDGE_*`, paced to `judge.rpm`). Answer relevancy
+    also needs an embedding model, run on the CPU.
+    """
+
+    # statement lists for a long answer outgrow the judge's 600 tokens
+    max_output_tokens: int = Field(default=2048, ge=1)
+    # at most this many retrieved passages (rank order) per question
+    max_contexts: int = Field(default=8, ge=1)
+    answer_relevancy: bool = True  # false: skip it (no embedding model is loaded)
+    strictness: int = Field(default=3, ge=1)  # questions generated per answer
+    embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embed_device: str = "cpu"
+
+
 class Lawyer(_Section):
     sample_size: int
     seed: int
@@ -340,6 +357,7 @@ class Settings(_Section):
     eval: EvalCfg
     latency: Latency
     answers: AnswersCfg = AnswersCfg()
+    ragas: RagasCfg = RagasCfg()
     lawyer: Lawyer
     build: Build
     encoder_check: EncoderCheck

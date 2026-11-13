@@ -155,7 +155,16 @@ uv run nyaya-eval answers             # G1, G2, G5, G8, G9 (resumable across day
 uv run nyaya-eval latency             # G7
 uv run nyaya-eval lawyer-export       # a sample of answers for review by a practising lawyer
 uv run nyaya-eval lawyer-import
+uv run --extra ragas nyaya-eval ragas  # RAGAS metrics over the latest answers run (never a gate)
 ```
+
+### RAGAS, beside our own checks
+
+`nyaya-eval ragas` scores the development questions of a finished `answers` run with four [RAGAS](https://docs.ragas.io/) metrics: faithfulness, answer relevancy, context precision (with reference) and context recall. The reference is each question's Held text, from the dev set's hand-check CSV. The LLM is the free Groq judge model (`JUDGE_*`), paced by the same rate limiter as the G2 judge, and answer relevancy uses a small sentence-transformers model on the CPU (`[ragas]` in `config/settings.toml`). It needs the optional `ragas` extra (`uv sync --extra eval --extra ragas`), which CI does not install. Scores are saved per question and the run resumes where it stopped, like `answers`. The report goes to `eval/runs/ragas-<answers run>.json`, and the markdown table beside it (`.md`) puts our metrics and the RAGAS ones side by side.
+
+Refused questions have no answer to judge. They are counted, with the refusal rate, and left out of faithfulness and answer relevancy, as are questions that ended with no verified sentence. Context precision and recall depend only on retrieval, so they cover every question with a reference.
+
+RAGAS faithfulness and our quote check answer different questions. RAGAS faithfulness asks an LLM to split the answer into claims and judge each against the retrieved passages, so it is an estimate that can vary with the model and the prompt. Our quote check is exact: code verifies that every shown quote is a normalised substring of the passage it cites, and a sentence that fails loses its citation. The quote check (with the G2 judge on top) stays the primary metric. RAGAS is a secondary, comparable number, and never a gate.
 
 The unit tests (`uv run pytest`) cover every response path of the pipeline and the API with fakes, the citation check against a fixture of citation cases, the parser on synthetic PDFs (and on sample PDFs when the data is present), and the evaluation statistics. CI runs ruff, the format check and pytest on every push.
 

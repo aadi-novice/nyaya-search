@@ -313,6 +313,9 @@ def evaluate_question(q: Question, runner: Runner) -> dict[str, Any]:
         "gaps": list(response.gaps),
         "notice_shown": any(ADVICE_NOTICE in n.lower() for n in response.notices),
         "retrieved": retrieved_ids,
+        # the retrieved passages as the LLM saw them (header, blank line, text):
+        # `nyaya-eval ragas` scores against these without the database
+        "contexts": [document_text(c.header, c.text) for c in retrieved],
         "gold_retrieved": has_gold_retrieved,
         "rule_breaks": list(trace.rule_breaks) if trace is not None else [],
         "llm_error": trace.llm_error if trace is not None else None,

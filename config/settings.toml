@@ -245,6 +245,16 @@ rate_limit_retries = 6   # 429 retries before the run stops (resume later)
 backoff_base_s = 5.0     # doubled per retry; a Retry-After header can lengthen it
 backoff_max_s = 120.0
 
+[ragas]
+# nyaya-eval ragas: LLM-judged RAGAS metrics beside our own (never a gate).
+# The LLM is the judge (JUDGE_*), paced to judge.rpm with the [answers] backoff.
+max_output_tokens = 2048  # statement lists for long answers need more than judge.max_output_tokens
+max_contexts = 8          # retrieved passages per question, in rank order (retrieval.final_k)
+answer_relevancy = true   # false skips it, and no embedding model is loaded
+strictness = 3            # questions generated per answer for answer relevancy
+embed_model = "sentence-transformers/all-MiniLM-L6-v2"  # small, CPU-friendly
+embed_device = "cpu"      # never the GPU: the build may be using it
+
 [lawyer]
 sample_size = 30
 seed = 13
