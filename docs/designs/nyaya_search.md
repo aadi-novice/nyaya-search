@@ -898,15 +898,22 @@ with the citation text as the question.
 
 **Hybrid retrieval.**
 
-*   **Keyword search:** normalised question words joined with OR, plus each
-    quoted phrase as an exact phrase (`phraseto_tsquery`). Results are
-    ranked by `ts_rank_cd`, top `retrieval.keyword_k`.
+*   **Keyword search (changed 2026-11-17, see "BM25 trigger" below):** BM25
+    (`bm25s`, k1 1.5, b 0.75) over each chunk's `header || ' ' || text`,
+    the string the `tsv` column indexes, with bm25s's English stop words
+    and no stemming. Chunks containing a quoted phrase exactly
+    (`phraseto_tsquery`, found in Postgres within the filters) come first.
+    Top `retrieval.keyword_k`. `retrieval.keyword_engine = "postgres"`
+    switches back to Postgres full-text search: normalised question words
+    joined with OR, plus each quoted phrase, ranked by `ts_rank(tsv, query,
+    1)` (`ts_rank_cd` until 2026-11-17).
 *   **Vector search:** HNSW with `SET LOCAL hnsw.ef_search =
     retrieval.ef_search` and `hnsw.iterative_scan = relaxed_order`, so
     filtered queries keep scanning until they have enough rows. Top
     `retrieval.vector_k`.
 *   **Filters:** both searches apply the same SQL `WHERE` clause built from
-    the filters. Rows returned and rows requested are logged.
+    the filters. Rows returned and rows requested are logged. For BM25 the
+    clause selects the chunk IDs that pass, and only those are scored.
     *   **Judge:** the filter value goes through `normalize_judge()` and is
         compared with the normalised `judges` array.
     *   **Act:** the filter value goes through `normalize_text()` and the
@@ -919,6 +926,61 @@ with the citation text as the question.
     in-memory BM25 library (`bm25s`) on the development set. If BM25's
     recall@50 is higher by **3 points or more**, and the 95% confidence
     interval excludes zero, adopt ParadeDB `pg_search` or Alternative M.
+    *   **Fired 2026-11-13** (run `bm25-trigger-20261113T035246Z-3136e7`, 44
+        answerable `dev_draft_v0` questions, judgment level): Postgres
+        recall@5 / recall@50 / MRR 0.09 / 0.20 / 0.09, `bm25s` 0.52 / 0.80 /
+        0.49; gap 59 points (95% CI 45–73).
+    *   **Diagnosis 2026-11-17.** The OR query matched 60–95% of all chunks
+        (for example 282,370 of 296,151 for dev-0001, through "court",
+        "order", "state"), and `ts_rank_cd` ranks by the density of any
+        matched word, with no inverse document frequency, so long chunks
+        that repeat common legal words won. `ts_rank` (which saturates each
+        word's contribution) with length normalisation 1 reached 0.48 /
+        0.75 / 0.40; dropping words found in more than 5% or 20% of chunks
+        did not help (0.68 and 0.73 recall@50). Each OR query still ranks
+        about 250,000 rows (3.3 s on average). Postgres has no per-word IDF, so
+        no query or ranking change closes the gap cheaply.
+    *   **Decision 2026-11-17: the keyword leg is BM25 in the API process
+        (Alternative M's BM25 library, without Qdrant).** ParadeDB
+        `pg_search` would replace the `pgvector/pgvector:pg17` image under
+        the live data volume; the Docker image swap and a reload of the live
+        index were out of scope for v1. `bm25s` is the trigger's own
+        library, so the production leg is the one measured. Postgres stays
+        the store of record: it supplies the texts, applies the filters
+        and finds quoted phrases; `nyaya.search.bm25` only scores.
+        *   **Index files:** `build/bm25/<index_version>/` (bm25s arrays,
+            memory-mapped at query time, about 330 MB for 296,151 chunks;
+            about 0.5 GB of RAM while building, 3–4 minutes). `nyaya-build
+            load` builds them for the new version; `nyaya-build bm25
+            --version <v>` rebuilds them. An engine that finds them missing
+            or stale (another version, stemmer or chunk count) builds them
+            from the database and saves them, so the Docker API, which has
+            no `build/` mount, builds its own at startup.
+        *   **Stemming off:** the Snowball stemmer moved recall@50 from 0.80
+            to 0.82 and MRR from 0.49 to 0.42 on the same questions, so it
+            stays off (`retrieval.bm25_stemmer`).
+        *   **The trigger still compares Postgres full-text search
+            (`PostgresSearch.fts_keyword`, now `ts_rank`) with the
+            production BM25 index.**
+    *   **Re-run after both changes (2026-11-17,
+        `bm25-trigger-20261117T153308Z-6eeca2`):** Postgres with `ts_rank`
+        0.48 / 0.75 / 0.40, BM25 0.52 / 0.80 / 0.49; gap 4.5 points, 95% CI
+        −6.8 to 15.9, so by its rule the trigger **no longer fires** on 44
+        questions. BM25 stays the keyword leg anyway, because it was adopted
+        when the trigger fired on the leg as built, and it is ahead on every
+        measure that the decision affects (same 44 questions, Qwen3
+        embedder and reranker; `eval/runs/fts-hybrid-comparison-20261117.json`
+        and `retrieval-20261117T152739Z-1edded`):
+
+        | Keyword leg | keyword s / query | hybrid R@5 / R@50 / MRR | hybrid + rerank R@5 / R@50 / MRR |
+        | --- | --- | --- | --- |
+        | Postgres `ts_rank_cd` (as built) | not timed | 0.48 / 0.77 / 0.29 | 0.70 / 0.77 / 0.52 |
+        | Postgres `ts_rank`, normalisation 1 | 3.3 | 0.61 / 0.80 / 0.52 | 0.70 / 0.80 / 0.55 |
+        | BM25 (`bm25s`) | 0.04 | 0.64 / 0.84 / 0.57 | 0.73 / 0.84 / 0.56 |
+
+        The keyword times are single-threaded, warm, on the RTX 2060
+        machine; the Postgres query ranks every chunk that contains any
+        question word.
 *   **Exact search for G4:** the same vector query run with index scans
     disabled.
 
@@ -1112,7 +1174,7 @@ to.
 | Refusal thresholds | 0.35 (Qwen3), 0.20 (Cohere) | provisional | `nyaya-eval tune-threshold` |
 | Answer LLM | a free hosted model behind an OpenAI-compatible client | open | chosen before the first answer run; its free tier must cover a run, or split it across days |
 | Judge model | a free hosted model from a different family | open | kappa ≥ 0.6 against the hand checks |
-| Keyword engine | Postgres full-text search | provisional | the BM25 trigger |
+| Keyword engine | BM25 (`bm25s`) in the API process; Postgres full-text search as a setting | decided 2026-11-17 | the BM25 trigger fired (see "Hybrid retrieval") |
 | Second search engine | see Open Questions | open | escalated |
 
 ## Alternatives Considered
@@ -2186,8 +2248,11 @@ to.
         *   an Act, through an `EXISTS` on `refs` with `kind = 'act'` and
             `value_norm` equal to the normalised, alias-mapped filter value;
         *   `outcome` equal to one of the `outcome_map` values.
-    *   **Keyword search:** an OR `to_tsquery`, plus `phraseto_tsquery` for
-        quoted phrases, ranked by `ts_rank_cd`.
+    *   **Keyword search:** BM25 from `nyaya.search.bm25` when the engine
+        has a BM25 index (the default since 2026-11-17), with the filters
+        and quoted phrases applied in SQL; otherwise (`fts_keyword`) an OR
+        `to_tsquery`, plus `phraseto_tsquery` for quoted phrases, ranked by
+        `ts_rank(tsv, query, 1)`.
     *   **Vector search:** `SET LOCAL hnsw.ef_search` and
         `hnsw.iterative_scan = relaxed_order`. Exact mode sets
         `enable_indexscan = off` for the transaction.
