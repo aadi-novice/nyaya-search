@@ -64,6 +64,12 @@ paraphrase, its answer is the Held point, and it names no party.
 *   `expected_route`: `citation_lookup` or `hybrid`.
 *   `expected_path`: the judgment that must be in the reranked top
     `retrieval.final_k`, or null for a question no 2025 judgment answers.
+*   `filters` (optional): a `Filters` object passed to retrieval, as in
+    `/ask`. smoke-03 (a bare keyword question) and smoke-05 carry
+    `{"year_from": 2025, "year_to": 2025}`: the set was written for a
+    2025-only index, and on the 2010–2026 index older judgments on the same
+    point (section 438 anticipatory bail; cheating FIRs over civil title
+    disputes) outrank the 2025 gold judgment.
 *   10 questions about 2025 judgments: 7 answerable, 3 not.
 *   **Pass rule** (`load` smoke check): the route matches for all 10, and at
     least `load.smoke_min_hits` (8) of the 10 count as hits. A question with
