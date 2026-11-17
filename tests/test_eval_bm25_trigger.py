@@ -92,3 +92,18 @@ def test_load_corpus():
             return R()
 
     assert load_corpus(Conn(), "v1") == (["a#judgment#1"], ["h t"])
+
+
+def test_trigger_uses_fts_keyword_when_the_engine_has_it():
+    chunks, idx = make()
+
+    class Engine(FakeEngine):
+        def keyword(self, question, filters, k):  # the production leg (BM25): not compared
+            raise AssertionError("the trigger must compare Postgres full-text search")
+
+        def fts_keyword(self, question, filters, k):
+            return FakeEngine.keyword(self, question, filters, k)
+
+    eng = Engine(chunks, keyword={"arbitral award": ["B#judgment#001"]})
+    ranking = TriggerRetriever(eng, idx, 50).run("keyword", "arbitral award", None)
+    assert ranking.chunk_ids == ["B#judgment#001"]

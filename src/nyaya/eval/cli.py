@@ -32,7 +32,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from nyaya.config import ConfigError, Settings, load_settings
+from nyaya.config import REPO_ROOT, ConfigError, Settings, load_settings
 from nyaya.eval.datasets import DATASETS_DIR, DevItem, read_jsonl
 from nyaya.eval.retrieval import METHODS
 
@@ -272,16 +272,23 @@ def cmd_size_steps(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_bm25_trigger(args: argparse.Namespace, settings: Settings) -> int:
-    from nyaya.eval.bm25_trigger import Bm25Index, load_corpus, run_bm25_trigger
+    from nyaya.eval.bm25_trigger import run_bm25_trigger
     from nyaya.eval.runs import save_run
     from nyaya.eval.wiring import active_version
+    from nyaya.search.bm25 import index_dir, open_index
     from nyaya.search.postgres import PostgresSearch
 
     items = read_jsonl(args.dataset, DevItem)
     with _connect(settings) as conn:
         version = args.index_version or active_version(conn)
-        index = Bm25Index(*load_corpus(conn, version))
-        engine = PostgresSearch(index_version=version)
+        # the production BM25 index (built if missing) against Postgres FTS
+        index = open_index(
+            conn,
+            version,
+            stemmer=settings.retrieval.bm25_stemmer,
+            directory=index_dir(REPO_ROOT / settings.paths.build, version),
+        )
+        engine = PostgresSearch(index_version=version, settings=settings)
         metrics = run_bm25_trigger(
             items,
             engine,

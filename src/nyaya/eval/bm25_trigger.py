@@ -7,7 +7,13 @@ Postgres keyword search (`SearchEngine.keyword`) and an in-memory BM25
 development questions, and scored with the retrieval scoring rules. The
 trigger **fires** when BM25's judgment-level recall@50 is higher by at least
 `bm25_trigger.min_gap_points` and the 95% paired-bootstrap interval of the
-gap excludes zero. Filters are not applied to either side (BM25 has none).
+gap excludes zero. Filters are not applied to either side.
+
+Since 2026-11-17 the BM25 side is the production keyword index
+(`nyaya.search.bm25`, the same files the API loads), and the Postgres side
+is `PostgresSearch.fts_keyword`, so the trigger keeps measuring Postgres
+full-text search against BM25 whichever leg is configured. `Bm25Index` here
+is the small in-memory variant the tests use.
 """
 
 from __future__ import annotations
@@ -62,15 +68,23 @@ class Bm25Index:
 @dataclass
 class TriggerRetriever:
     engine: Engine
-    index: Bm25Index
+    index: Any  # Bm25Index here, or nyaya.search.bm25.Bm25Index: search(question, k)
     k: int = 50
 
     def run(self, method: str, question: str, filters: Filters | None) -> Ranking:
         if method == "keyword":
-            return Ranking([h.chunk_id for h in self.engine.keyword(question, None, self.k)])
+            fts = getattr(self.engine, "fts_keyword", self.engine.keyword)
+            return Ranking([h.chunk_id for h in fts(question, None, self.k)])
         if method == "bm25":
             return Ranking(self.index.search(question, self.k))
         raise ValueError(f"unknown method {method!r}")
+
+
+def _stemmer_name(index: Any) -> str:
+    meta = getattr(index, "meta", None)
+    if meta is not None:
+        return meta.stemmer
+    return "english" if getattr(index, "stemmer", None) is not None else ""
 
 
 def load_corpus(conn: Any, index_version: str) -> tuple[list[str], list[str]]:
@@ -85,7 +99,7 @@ def load_corpus(conn: Any, index_version: str) -> tuple[list[str], list[str]]:
 def run_bm25_trigger(
     items: Sequence[DevItem],
     engine: Engine,
-    index: Bm25Index,
+    index: Any,
     *,
     k: int,
     samples: int,
@@ -104,6 +118,6 @@ def run_bm25_trigger(
         "gap_points": gap.as_dict(),
         "min_gap_points": min_gap_points,
         "fires": fires,
-        "stemmer": index.stemmer is not None,
+        "stemmer": _stemmer_name(index),
         "questions": len(report.item_ids),
     }
