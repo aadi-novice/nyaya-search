@@ -1030,6 +1030,23 @@ to.
     "yes") and 0.20 for Cohere.
 *   **Tuning:** `nyaya-eval tune-threshold` (Phase 2) tunes both on the
     development set, and writes them to the active `index_versions` row.
+*   **Tuned 2026-11-17** (`tune-threshold-20261117T160129Z-d1848a`, after
+    the BM25 keyword leg; 44 answerable `dev_draft_v0` questions and 40
+    `unanswerable_v1` questions; Qwen only): `threshold_qwen` = 0.99691
+    written to `p1-2010-2026a` (was the 0.35 seed, which refused almost
+    nothing). On the tuning questions it refuses 95% of unanswerable and
+    9.1% of answerable questions (limit 10%). `threshold_cohere` stays at
+    the 0.20 seed: the Cohere fallback is a paid API and was not tuned.
+*   **Score scale kept (decision 2026-11-17).** The tuned value sits near
+    1 because Qwen3-Reranker's P("yes") saturates. Thresholding the
+    yes-minus-no logit margin `m` instead was considered and not done: P =
+    1 / (1 + e^−m) is strictly increasing in `m`, so a threshold on either
+    refuses exactly the same questions (0.99691 is `m` = 5.78). Precision
+    is not the problem either: the logits are fp16, whose step near 5.8 is
+    about 0.004, which moves P by about 1e-5. Changing the score would
+    change `rerank_score` in the API, the trace and the page, for no change
+    in any decision. The real fragility is the sample size (84 questions):
+    the threshold is re-tuned per index version and again on `dev_v1`.
 
 **Answer generation.**
 
@@ -1171,7 +1188,7 @@ to.
 | Embedding model | Qwen3-Embedding-0.6B, 1024 dimensions | provisional | `scripts/select_models.py` compares it with BAAI/bge-m3 (also 1024 dimensions) on the development set |
 | Reranker | Qwen3-Reranker-0.6B, local | provisional | the same comparison; must fit in 6 GB together with the embedder |
 | Fallback reranker | Cohere Rerank 5 Fast via OpenRouter | decided | used only on local failure; every use logged |
-| Refusal thresholds | 0.35 (Qwen3), 0.20 (Cohere) | provisional | `nyaya-eval tune-threshold` |
+| Refusal thresholds | 0.99691 (Qwen3, tuned 2026-11-17 on `dev_draft_v0` + `unanswerable_v1`), 0.20 (Cohere, seed) | Qwen tuned; Cohere provisional | `nyaya-eval tune-threshold` |
 | Answer LLM | a free hosted model behind an OpenAI-compatible client | open | chosen before the first answer run; its free tier must cover a run, or split it across days |
 | Judge model | a free hosted model from a different family | open | kappa ≥ 0.6 against the hand checks |
 | Keyword engine | BM25 (`bm25s`) in the API process; Postgres full-text search as a setting | decided 2026-11-17 | the BM25 trigger fired (see "Hybrid retrieval") |
