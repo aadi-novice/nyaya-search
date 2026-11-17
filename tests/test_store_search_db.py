@@ -107,6 +107,23 @@ def test_load_search_activate(conn, tmp_path):
     assert eng.keyword("bail", Filters(act="penal code, 1860"), 10)
     assert eng.keyword("bail", Filters(judge="ABHAY S. OKA, J."), 10)
     assert eng.keyword("bail", Filters(outcome="allowed"), 10) == []
+
+    # the BM25 keyword leg, built from this schema's chunks, with the same filters
+    from nyaya.search.bm25 import open_index
+
+    bm = PostgresSearch(
+        index_version="v1",
+        schema=schema,
+        settings=settings,
+        conn=connection,
+        bm25=open_index(connection, "v1", stemmer="", directory=None),
+    )
+    assert bm.keyword('"anticipatory bail" 438', None, 10)[0].chunk_id == CHUNKS[0].chunk_id
+    assert [h.chunk_id for h in bm.keyword("rent arrears", None, 10)] == [CHUNKS[2].chunk_id]
+    assert bm.keyword("bail", Filters(act="penal code, 1860"), 10)
+    assert bm.keyword("bail", Filters(judge="ABHAY S. OKA, J."), 10)
+    assert bm.keyword("bail", Filters(outcome="allowed"), 10) == []
+    assert bm.keyword("bail", Filters(year_from=2030), 10) == []
     assert eng.resolve_alias("insc:2025:31") == "2025_1_230_238"
     assert eng.links_from([CHUNKS[1].chunk_id]) == {CHUNKS[1].chunk_id: [CHUNKS[0].chunk_id]}
     j = eng.get_judgment("2025_1_230_238")

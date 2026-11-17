@@ -174,6 +174,11 @@ final_k = 8
 ef_search = 100
 expand_rank_offset = 0.5
 lookup_max_editorial = 3
+# The keyword leg (decision 2026-11-17, design "BM25 trigger"): "bm25" (bm25s
+# over build/bm25/<index_version>, built at load) or "postgres" (full-text
+# search, ts_rank). Stemming ("english") needs PyStemmer and stays off.
+keyword_engine = "bm25"
+bm25_stemmer = ""
 
 # Seed values only: the refusal gate reads the active index_versions row.
 [refusal]

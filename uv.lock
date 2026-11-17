@@ -1122,6 +1122,7 @@ name = "nyaya"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "bm25s" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy" },
@@ -1149,7 +1150,6 @@ dev = [
     { name = "ruff" },
 ]
 eval = [
-    { name = "bm25s" },
     { name = "scipy" },
 ]
 kaggle = [
@@ -1163,7 +1163,7 @@ ragas = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bm25s", marker = "extra == 'eval'", specifier = ">=0.2" },
+    { name = "bm25s", specifier = ">=0.2" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "kaggle", marker = "extra == 'kaggle'", specifier = ">=2.2" },

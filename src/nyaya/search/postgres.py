@@ -23,6 +23,7 @@ import numpy as np
 
 from nyaya.config import OutcomeMap, Settings
 from nyaya.contracts import ChunkRecord, Filters, JudgmentRecord, SearchHit
+from nyaya.search.bm25 import Bm25Index
 from nyaya.text.normalize import normalize_judge, normalize_text
 
 log = logging.getLogger(__name__)
@@ -30,6 +31,8 @@ log = logging.getLogger(__name__)
 _SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 _QUOTED_RE = re.compile(r"[\"“”]([^\"“”]+)[\"“”]")
 _WORD_RE = re.compile(r"[^\W_]+")
+# quoted-phrase matches put first in the BM25 keyword list, at most this many
+PHRASE_CAP = 5000
 
 CHUNK_COLUMNS = (
     "chunk_id",
@@ -211,6 +214,35 @@ def build_keyword_sql(
     return sql, {**params, **where.params, "index_version": index_version, "k": k}
 
 
+def build_filtered_ids_sql(where: WhereClause, index_version: str) -> tuple[str, dict[str, Any]]:
+    """The chunk IDs that pass the filters (the BM25 keyword leg's mask)."""
+    join = _JOIN_JUDGMENTS if where.needs_judgments else ""
+    sql = (
+        f"SELECT c.chunk_id FROM chunks c{join}"
+        f" WHERE c.index_version = %(index_version)s{where.sql}"
+    )
+    return sql, {**where.params, "index_version": index_version}
+
+
+def build_phrase_sql(
+    phrases: Sequence[str], where: WhereClause, index_version: str, cap: int
+) -> tuple[str, dict[str, Any]] | None:
+    """Chunks containing any quoted phrase exactly (`phraseto_tsquery`), within the
+    filters, at most `cap`; None without phrases."""
+    if not phrases:
+        return None
+    parts = [f"phraseto_tsquery('english', %(phrase_{i})s)" for i in range(len(phrases))]
+    params: dict[str, Any] = {f"phrase_{i}": p for i, p in enumerate(phrases)}
+    join = _JOIN_JUDGMENTS if where.needs_judgments else ""
+    sql = (
+        f"SELECT c.chunk_id FROM chunks c{join}"
+        " WHERE c.index_version = %(index_version)s"
+        f" AND c.tsv @@ ({' || '.join(parts)}){where.sql}"
+        " ORDER BY c.chunk_id LIMIT %(cap)s"
+    )
+    return sql, {**params, **where.params, "index_version": index_version, "cap": cap}
+
+
 def build_vector_sql(where: WhereClause, index_version: str, k: int) -> tuple[str, dict[str, Any]]:
     """The vector query. Bind `qvec` separately (a pgvector value).
 
@@ -289,6 +321,7 @@ class PostgresSearch:
         settings: Settings | None = None,
         conn: Any = None,
         act_normalizer: Callable[[str], str] = normalize_text,
+        bm25: Bm25Index | None = None,
     ) -> None:
         if settings is None:
             from nyaya.config import load_settings
@@ -296,6 +329,7 @@ class PostgresSearch:
             settings = load_settings()
         self.settings = settings
         self.act_normalizer = act_normalizer
+        self.bm25 = bm25
         if conn is None:
             from nyaya.store.db import connect
 
@@ -320,6 +354,34 @@ class PostgresSearch:
         return build_filter_sql(filters, self.settings.outcome_map, self.act_normalizer)
 
     def keyword(self, question: str, filters: Filters | None, k: int) -> list[SearchHit]:
+        """BM25 when the engine has a BM25 index (production), else Postgres FTS."""
+        if self.bm25 is not None:
+            ids = self._bm25_ids(question, filters, k)
+            log.info("keyword search (bm25): %d rows returned of %d requested", len(ids), k)
+            return [
+                SearchHit(chunk_id=c, keyword_rank=i, fused_rank=float(i))
+                for i, c in enumerate(ids, 1)
+            ]
+        return self.fts_keyword(question, filters, k)
+
+    def _bm25_ids(self, question: str, filters: Filters | None, k: int) -> list[str]:
+        assert self.bm25 is not None
+        where = self._where(filters)
+        allowed = None
+        if where.sql:
+            sql, params = build_filtered_ids_sql(where, self.index_version)
+            allowed = self.bm25.mask(r[0] for r in self.conn.execute(sql, params).fetchall())
+            if not allowed.any():
+                return []
+        first = None
+        built = build_phrase_sql(keyword_terms(question)[1], where, self.index_version, PHRASE_CAP)
+        if built is not None:
+            first = self.bm25.mask(r[0] for r in self.conn.execute(*built).fetchall())
+        return self.bm25.search(question, k, allowed=allowed, first=first)
+
+    def fts_keyword(self, question: str, filters: Filters | None, k: int) -> list[SearchHit]:
+        """Postgres full-text search (`ts_rank`); the fallback keyword leg and the
+        BM25 trigger's baseline."""
         built = build_keyword_sql(question, self._where(filters), self.index_version, k)
         if built is None:
             return []
