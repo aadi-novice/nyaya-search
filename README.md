@@ -25,12 +25,13 @@ flowchart TD
         D --> E["Chunk<br/>opinion → numbered paragraph → size pass"]
         E --> F["Embed<br/>Qwen3-Embedding-0.6B (local GPU)"]
         F --> G[("PostgreSQL 17<br/>pgvector HNSW + full-text tsvector")]
+        G --> BM[("BM25 index<br/>build/bm25/(version)")]
     end
 
     subgraph QUERY["Query pipeline (per question)"]
         Q["Question + filters<br/>(years, Act, outcome, judge)"] --> R{"Router"}
         R -- "citation" --> L["Alias lookup"] --> P["Passages"]
-        R -- "research question" --> H["Keyword top-50 + vector top-50"]
+        R -- "research question" --> H["BM25 top-50 + vector top-50"]
         H --> RRF["Reciprocal rank fusion<br/>+ Held-point link expansion"]
         RRF --> RR["Rerank<br/>Qwen3-Reranker-0.6B (fallback: Cohere)"]
         RR --> T{"Top score ≥ threshold?"}
@@ -42,6 +43,7 @@ flowchart TD
     end
 
     G --> H
+    BM --> H
     G --> L
 ```
 
@@ -59,7 +61,7 @@ flowchart TD
 
 **Refusal threshold.** After reranking, the top score must clear a threshold, or the system refuses before calling the LLM. The thresholds are tuned per reranker (the local Qwen reranker and the Cohere fallback score differently), on the development set only, under the rule that at most 10% of answerable questions may be refused. They are stored with the index version, not in code.
 
-**Hybrid search in one database.** PostgreSQL holds the judgments, chunks, vectors (pgvector HNSW, with iterative scans so filtered queries still return enough rows), the full-text index, citation aliases and traces. Filters apply to keyword and vector search alike, over one copy of the data. Qdrant is the planned scale-out path, and an OpenSearch comparison is planned (design, Alternatives M and N).
+**Hybrid search, one store of record.** PostgreSQL holds the judgments, chunks, vectors (pgvector HNSW, with iterative scans so filtered queries still return enough rows), citation aliases and traces. The keyword leg is BM25 (`bm25s`), built from the chunks in Postgres when an index version is loaded and memory-mapped by the API: Postgres full-text search has no inverse document frequency, and on the development questions it found the right judgment in the top 50 for 20% of questions (75% after a ranking fix) against BM25's 80% (design, "BM25 trigger"). Filters are applied in SQL to keyword and vector search alike: for BM25 they select the chunks that may be scored. Qdrant is the planned scale-out path, and an OpenSearch comparison is planned (design, Alternatives M and N).
 
 **Search before the answer.** `POST /search` runs exactly the retrieval that `/ask` uses and stops before the LLM, so the passages appear as soon as reranking finishes. The `/ask` that follows reuses that retrieval from a small cache (same question, filters and index version) instead of searching again.
 
