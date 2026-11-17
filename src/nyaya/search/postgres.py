@@ -201,7 +201,7 @@ def build_keyword_sql(
     join = _JOIN_JUDGMENTS if where.needs_judgments else ""
     sql = (
         f"WITH q AS (SELECT {tsq} AS query)"
-        " SELECT c.chunk_id, ts_rank_cd(c.tsv, q.query) AS score"
+        " SELECT c.chunk_id, ts_rank(c.tsv, q.query, 1) AS score"
         f" FROM q, chunks c{join}"
         " WHERE c.index_version = %(index_version)s AND c.tsv @@ q.query"
         f"{where.sql}"
