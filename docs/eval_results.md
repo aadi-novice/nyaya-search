@@ -190,18 +190,41 @@ estimated from stand-ins, and is small.
     2026-11-17 and is identical to the current parser's output; its two
     automatic margin-letter hints (2025_2_1625_1702) are both "Ch D"
     (Chancery Division) in case citations, not furniture.
-*   **G7:** not yet measured with `latency`. The smoke runs on this index
-    took 7.4–10.3 s end to end (retrieve about 1–2 s, rerank about 4 s,
-    LLM 2–4 s), under the 15 s target, but that is not the gate's
-    measurement.
+*   **G7: pass, measured on 2026-11-18 from 29 of 32 requests.**
+    *   **Result:** p50 6.7 s, p95 9.4 s, max 11.3 s, against a 15 s p95
+        target. The 29 requests were 2 warm-ups and 27 of the 30 timed
+        questions: 24 answered, 4 refused and 1 `passages` (Groq HTTP 400).
+    *   **Stages:** median rerank 3.6 s, median LLM 2.9 s, retrieval about
+        0.5 s.
+    *   **How it was measured:** run with `nyaya-eval latency` on the
+        first 30 dev questions, one at a time and warm. The run stopped at
+        dev-0029 when Groq's daily token limit for the answer model ran out
+        (200k tokens). Because of that, the numbers were recomputed from
+        the request traces (`timings_ms.total`) of that run's
+        non-rate-limited requests, instead of from the command's own
+        summary.
+    *   **Discarded first attempt:** `latency-20261118T143716Z-5e26fa`
+        was invalid. A network outage turned 26 requests into
+        `APIConnectionError` → `passages`, and the tool timed them as
+        samples. The tool now retries connection and timeout errors like
+        rate limits.
 *   **G10:** the index was built with one command
     (`nyaya-build run --years 2010-2026`); a clean rebuild has not been
     repeated to confirm it.
 
 ## Pending
 
-*   `nyaya-eval latency` (G7) and `nyaya-eval ragas` on the answers run
-    above, when Groq's daily quota allows.
+*   A complete `nyaya-eval latency` run (G7) on a day with fresh quota.
+*   **RAGAS (in progress, never a gate):** `nyaya-eval ragas --run-id
+    answers-20261117T160221Z-1038ae` has scored 8 of 44 dev questions.
+    *   **Partial means:** faithfulness 0.87, answer relevancy 0.75, context
+        precision 0.79, context recall 0.63. With n = 8 these are too few to
+        report as results.
+    *   **Cost:** each question costs about 25k judge tokens, because
+        faithfulness, context precision and context recall each send all 8
+        retrieved passages. Groq's free tier allows 200k tokens a day per
+        model, so the full set takes about 5 days of quota. The run resumes
+        where it stopped.
 *   `size-steps` (G4), about an hour on the GPU.
 *   `judge-validate` needs the author's hand labels; G6 needs the hand check
     ([guide](hand_checks.md)).

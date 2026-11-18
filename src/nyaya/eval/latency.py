@@ -6,9 +6,12 @@
 *   One request at a time. Each is timed on the wall clock around
     `pipeline.ask`; the pipeline's own `timings_ms` give the stage split.
 *   Requests are paced to `answers.llm_rpm` *between* requests, outside the
-    timed region. A request whose LLM call was rate-limited (HTTP 429) is
-    not a latency sample: it is retried after a backoff, up to
-    `answers.rate_limit_retries` times, then the run stops.
+    timed region. A request whose LLM call failed transiently (rate-limited,
+    HTTP 429, or a connection or timeout error) is not a latency sample: it
+    is retried after a backoff, up to `answers.rate_limit_retries` times,
+    then the run stops. Otherwise a network outage would be timed as fast
+    `passages` responses (seen on 2026-11-18). A provider error that is not
+    transient (such as HTTP 400) stays a sample.
 *   A request that takes longer than `timeouts.request_s`, or ends in
     `error`, is a failure, and counts as an infinitely slow sample, so more
     than 5% failures fail the p95 target.
@@ -70,9 +73,13 @@ def stage_split(timings_ms: dict[str, float]) -> dict[str, float]:
     return out
 
 
+TRANSIENT_LLM_ERRORS = ("RateLimit", "429", "APIConnectionError", "APITimeoutError", "ConnectError")
+
+
 def rate_limited(trace: Any) -> bool:
+    """True when the LLM call failed transiently, so the request is not a latency sample."""
     err = getattr(trace, "llm_error", None) or ""
-    return "RateLimit" in err or "429" in err
+    return any(marker in err for marker in TRANSIENT_LLM_ERRORS)
 
 
 @dataclass
@@ -124,7 +131,10 @@ def run_latency(
             if not rate_limited(trace):
                 break
             if attempt >= retries:
-                raise LatencyAborted(f"{qid}: still rate-limited after {retries} retries")
+                raise LatencyAborted(
+                    f"{qid}: LLM still unavailable (rate limit or connection) "
+                    f"after {retries} retries"
+                )
             clock.sleep(min(backoff_base_s * 2**attempt, backoff_max_s))
             attempt += 1
         failed = response.status is Status.ERROR or seconds > request_limit_s
