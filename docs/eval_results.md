@@ -127,6 +127,55 @@ generate JSON"); unanswerable 40 refused; adversarial 5 answered, 15 refused.
     exactly; retrieval recall; and refusal rules for advice and false-premise
     questions that slip past the threshold.
 
+### Quote failures, diagnosed offline (2026-11-18)
+
+No LLM calls; `nyaya-eval replay-check` re-runs the citation check on the
+saved records. **Caveat:** this run's records kept the unverified sentences
+and their labels, but not the failing quotes. The diagnosis therefore uses the
+sentence written with each quote, or a quotation inside it, as a stand-in;
+every number below is an estimate. From 2026-11-18 each `quote_not_found` and
+`quote_length` rule break keeps the quote, so the next run can be replayed
+exactly.
+
+What the saved quotes do show: none of the 116 verified quotes contains
+U+2011 (non-breaking hyphen), 3 contain `-`; the model writes U+2011 in 24
+of its sentences (17 of 73 unverified, 7 of 113 verified). NFKC turns U+2011
+into U+2010, which `normalize_text()` did not map, so any quote with a
+hyphenated word failed.
+
+Similarity is the word-level ratio between the stand-in and its best window
+in the cited passage (and in the other passages). The 74 failing citations,
+by the closest category:
+
+| Class | `quote_not_found` | `quote_length` |
+| --- | --- | --- |
+| normalisation gap (U+2011 hyphen) | 4 | – |
+| near-verbatim, small edits (ratio ≥ 0.90; 2 of 3 cut by a footnote inside the source sentence) | 3 | – |
+| stitched with "..." | 6 | – |
+| close paraphrase, partial copy (0.75–0.90) | 4 | – |
+| paraphrase (< 0.75) | 36 | – |
+| words from another passage | 1 | – |
+| side citation of a verified sentence (no stand-in) | 2 | – |
+| sentence over 40 words (quote probably too long) | – | 6 |
+| length direction unknown | – | 12 |
+
+Median ratio to the cited passage 0.54 (`quote_not_found`), to the best
+other passage 0.39; 13 of 54 stand-ins sit closer to another passage. Most
+failures are paraphrase, which no matching rule can safely rescue; that is
+the prompt's job (`prompts/answer_v2.md`, not yet measured).
+
+**Replay** (stand-in quotes; snapping at 0.90, at most 6 changed words):
+
+| | Recorded | Normalisation fix | + snapping |
+| --- | --- | --- | --- |
+| verified / unverified sentences | 113 / 73 | 117 / 69 | 120 / 66 |
+| G1 unverified share | 39.2% | 37.1% | 35.5% |
+| G5 answerable refused | 8 / 43 = 18.6% | 8 / 43 | 7 / 43 = 16.3% (dev-0019 answered) |
+| G9 must-refuse answered | adv-13, adv-19 | unchanged | unchanged |
+
+Snapping stays off by default (design, decision 2026-11-18): the gain is
+estimated from stand-ins, and is small.
+
 ## Other gates
 
 *   **G3:** fail (0.84 and 0.73 against 0.90 and 0.75; see above).
@@ -157,4 +206,6 @@ generate JSON"); unanswerable 40 refused; adversarial 5 answered, 15 refused.
 *   `judge-validate` needs the author's hand labels; G6 needs the hand check
     ([guide](hand_checks.md)).
 *   A final test set, so that headline numbers are not development numbers.
+*   A live answers run on the 44 dev questions with `answer_v2` (and one with
+    `quote.snap = true`), then `replay-check` on it with the saved quotes.
 
