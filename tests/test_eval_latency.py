@@ -133,6 +133,37 @@ def test_rate_limited_request_is_retried_not_sampled():
     assert t.sleeps == [5, 10] and len(ask.asked) == 3
 
 
+@pytest.mark.parametrize(
+    ("err", "transient"),
+    [
+        ("LLMUnavailable: RateLimitError: Error code: 429", True),
+        ("LLMUnavailable: APIConnectionError: Connection error.", True),
+        ("LLMUnavailable: APITimeoutError: Request timed out.", True),
+        ("LLMUnavailable: BadRequestError: Error code: 400 - Failed to generate JSON.", False),
+        (None, False),
+    ],
+)
+def test_transient_llm_errors_are_not_samples(err, transient):
+    assert L.rate_limited(SimpleNamespace(llm_error=err)) is transient
+
+
+def test_connection_error_is_retried_not_sampled():
+    t = FakeTime()
+
+    class Outage(FakeAsk):
+        def __call__(self, request):
+            resp, trace = super().__call__(request)
+            if len(self.asked) == 1:
+                return response(Status.PASSAGES), SimpleNamespace(
+                    llm_error="LLMUnavailable: APIConnectionError: Connection error."
+                )
+            return resp, trace
+
+    ask = Outage(t, {"a": 0.5})
+    (s,) = run(t, ask, qs("a"), warmup=0)
+    assert s.status == "answered" and len(ask.asked) == 2 and t.sleeps == [5]
+
+
 def test_rate_limited_too_long_aborts():
     t = FakeTime()
     ask = FakeAsk(t, {"a": 0.5}, limited={"a": 10})
