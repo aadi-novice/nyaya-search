@@ -16,6 +16,8 @@ Subcommands and the phase in which each is first needed:
     lawyer-import   Phase 3   the lawyer's ratings into eval_runs (never a gate)
     ragas           Phase 5   RAGAS metrics over an answers run, beside ours (never a
                               gate; needs the `ragas` extra; resumable)
+    replay-check    Phase 5   the citation check re-run on a saved answers run, offline
+                              (no LLM, GPU or database; never a gate)
 
 Exit codes: 0 success; 1 a gate failed (size-steps, answers, latency,
 judge-validate); 2 usage or setup error (g6-holdout: also fewer in-scope PDFs
@@ -136,6 +138,23 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument(
         "--no-relevancy", action="store_true", help="skip answer relevancy (no embedding model)"
     )
+
+    rc = sub.add_parser(
+        "replay-check", help="re-run the citation check on a saved answers run (offline)"
+    )
+    rc.add_argument("--run-id", default=None, help="the answers run (default: the latest)")
+    rc.add_argument(
+        "--results", type=Path, default=None, help="an answers results.jsonl (instead of --run-id)"
+    )
+    rc.add_argument(
+        "--proxy",
+        action="store_true",
+        help="stand in the sentence for failed quotes the run did not save (an estimate)",
+    )
+    snap = rc.add_mutually_exclusive_group()
+    snap.add_argument("--snap", dest="snap", action="store_true", default=None)
+    snap.add_argument("--no-snap", dest="snap", action="store_false")
+    rc.add_argument("--out", type=Path, default=None, help="also write the full report here")
     return p
 
 
@@ -753,6 +772,30 @@ def cmd_ragas(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def cmd_replay_check(args: argparse.Namespace, settings: Settings) -> int:
+    from nyaya.eval.answers import ResultsFile
+    from nyaya.eval.replay import replay
+
+    if args.results is not None:
+        if not args.results.exists():
+            raise FileNotFoundError(f"answers results not found: {args.results}")
+        answers = ResultsFile(args.results.parent.name, args.results.parent.parent)
+        answers.path = args.results
+        records = list(answers.load().values())
+    else:
+        _, records = _answers_run(args.run_id)
+    if args.snap is not None:
+        quote = settings.quote.model_copy(update={"snap": args.snap})
+        settings = settings.model_copy(update={"quote": quote})
+    report = replay(records, settings, proxy=args.proxy)
+    if args.out is not None:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+        args.out.write_text(text, encoding="utf-8", newline="\n")
+    _print({k: report[k] for k in ("proxy", "settings", "recorded", "replayed", "changed")})
+    return 0
+
+
 COMMANDS = {
     "build-devset": cmd_build_devset,
     "g6-holdout": cmd_g6_holdout,
@@ -766,6 +809,7 @@ COMMANDS = {
     "lawyer-export": cmd_lawyer_export,
     "lawyer-import": cmd_lawyer_import,
     "ragas": cmd_ragas,
+    "replay-check": cmd_replay_check,
 }
 
 
