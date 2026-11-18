@@ -131,17 +131,38 @@ function formatDate(iso) {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function scoreView(score) {
+// Qwen3-Reranker probabilities saturate: a clear question's top passages can all
+// score 0.999x, so showing the probability gives every card "1.00" and a full bar.
+// The bar instead compares log-odds with the best passage in this result set:
+// 1 for the best, less for weaker ones, 0 at or below p = 0.5.
+function relevanceShare(score, top) {
+  const logit = (p) => {
+    const q = Math.min(Math.max(p, 1e-6), 1 - 1e-6);
+    return Math.log(q / (1 - q));
+  };
+  const best = logit(top);
+  if (!(best > 0)) return 0;
+  return Math.max(0, Math.min(1, logit(score) / best));
+}
+
+function scoreView(p, ctx) {
+  const score = p.rerank_score;
   if (score === null || score === undefined) return null;
-  const pct = Math.max(0, Math.min(1, score)) * 100;
+  const pct = relevanceShare(score, ctx.topScore) * 100;
   const bar = el("span", { className: "score-bar", "aria-hidden": "true" }, [el("span")]);
   bar.firstChild.style.width = pct.toFixed(0) + "%";
-  return el("span", { className: "score", title: "Reranker relevance score" }, [
-    bar, "relevance " + score.toFixed(2),
+  const prob = "reranker probability " + score.toFixed(4);
+  return el("span", {
+    className: "score",
+    title: capitalise(prob) + ". The bar compares log-odds with the top passage in this list.",
+  }, [
+    bar,
+    "rank " + p.rank + " of " + ctx.count,
+    el("span", { className: "visually-hidden", text: ", " + prob }),
   ]);
 }
 
-function sourceCard(p) {
+function sourceCard(p, ctx) {
   const textEl = el("div", { className: "source-text", text: p.text });
   const card = el("li", { className: "source", id: "src-" + p.rank, tabindex: "-1" });
   const toggle = el("button", {
@@ -160,7 +181,7 @@ function sourceCard(p) {
       ]),
       el("span", { className: "cited-as", hidden: true }),
     ]),
-    el("p", { className: "source-meta" }, [meta, ...refTags(p), scoreView(p.rerank_score)]),
+    el("p", { className: "source-meta" }, [meta, ...refTags(p), scoreView(p, ctx)]),
     textEl,
     el("div", { className: "source-actions" }, [
       toggle,
@@ -207,7 +228,9 @@ function renderSources(data) {
   $("sources-meta").textContent = n ? n + " passage" + (n === 1 ? "" : "s") + secs : "";
   const banner = searchBanner(data);
   if (banner) box.append(el("p", { className: "status-banner", text: banner }));
-  if (n) box.append(el("ol", { className: "sources" }, data.passages.map(sourceCard)));
+  const scores = data.passages.map((p) => p.rerank_score).filter((x) => typeof x === "number");
+  const ctx = { count: n, topScore: scores.length ? Math.max(...scores) : null };
+  if (n) box.append(el("ol", { className: "sources" }, data.passages.map((p) => sourceCard(p, ctx))));
 }
 
 // Mark `quote` inside a passage's text. The match ignores case, punctuation and

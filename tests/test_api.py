@@ -6,6 +6,9 @@ status path is reachable without a database or a model.
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 import threading
 from datetime import date
 from typing import Any
@@ -495,6 +498,34 @@ def test_page_has_no_external_resources() -> None:
 def test_page_never_renders_response_text_as_html() -> None:
     js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
     assert "innerHTML" not in js and "outerHTML" not in js and "insertAdjacentHTML" not in js
+
+
+def _js_function(js: str, name: str) -> str:
+    start = js.index(f"function {name}(")
+    return js[start : js.index("\n}\n", start) + 2]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node.js")
+def test_relevance_bar_spreads_saturated_scores() -> None:
+    """Saturated reranker probabilities (0.999x) must not all draw a full bar."""
+    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    cases = [[0.9995, 0.9995], [0.9992, 0.9995], [0.3, 0.9995], [1.0, 1.0], [0.4, 0.45]]
+    script = (
+        _js_function(js, "relevanceShare")
+        + f"\nconst cases = {json.dumps(cases)};"
+        + "\nconsole.log(JSON.stringify(cases.map(([s, t]) => relevanceShare(s, t))));"
+    )
+    out = subprocess.run(
+        ["node", "-e", script], capture_output=True, text=True, check=True, timeout=30
+    ).stdout
+    top, saturated, weak, exact_one, below_half = json.loads(out)
+    assert top == 1 and exact_one == 1
+    assert 0.9 < saturated < 1  # a little shorter than the top, not identical
+    assert weak == 0 and below_half == 0  # p <= 0.5 has no positive log-odds
+    # the card shows the rank and keeps the raw probability for the tooltip and screen readers
+    view = _js_function(js, "scoreView")
+    assert '"rank " + p.rank' in view and "score.toFixed(4)" in view
+    assert "visually-hidden" in view
 
 
 def test_page_renders_unverified_without_citation_fields() -> None:

@@ -71,6 +71,11 @@ def test_phase1_smoke_dataset():
     assert by_q["2025 INSC 31"].expected_path == "2025_1_230_238"
     assert by_q["anticipatory bail section 438"].expected_route is Route.HYBRID
     assert any(r.filters is not None and r.filters.act for r in rows)
+    # Bare or generic questions are pinned to 2025: on the 2010-2026 index,
+    # older judgments on the same point outrank the 2025 gold judgment.
+    for sid in ("smoke-03", "smoke-05"):
+        f = next(r for r in rows if r.id == sid).filters
+        assert f is not None and (f.year_from, f.year_to) == (2025, 2025)
     for r in answerable:
         assert r.expected_path.startswith("2025_")
 
