@@ -91,23 +91,41 @@ the logit would refuse exactly the same questions. `threshold_cohere` is
 still the 0.20 seed (paid fallback, not tuned). Caveat: the same 40
 unanswerable questions are used for tuning and for G5 below.
 
-## Answers run (G1, G2, G5, G8, G9): partial
+## Answers run (G1, G2, G5, G8, G9)
 
 Run `answers-20261117T160221Z-1038ae` (answer model `openai/gpt-oss-120b`,
-judge `qwen/qwen3.8-27b`, both on Groq's free tier). **88 of 104 questions
-finished**: all 44 dev, all 40 unanswerable, 4 of 20 adversarial. The session
-stopped when the answer model stayed rate-limited after every retry (Groq's
-daily token limit: 206k tokens used); no rate-limited question was recorded,
-so none counts as a refusal. Numbers below are from the partial summary.
+judge `qwen/qwen3.8-27b`, both on Groq's free tier), **all 104 questions**
+(44 dev, 40 unanswerable, 20 adversarial), over two sessions
+(2026-11-17 and 2026-11-18). The first session stopped at 88 questions when
+Groq's daily token limit ran out; no rate-limited question was recorded, so
+none counts as a refusal. The run used about 241k answer-model and 105k judge
+tokens.
 
-| Gate | Target | Measured (partial) | Status |
+Outcomes: dev 35 answered, 8 refused, 1 `passages` (Groq HTTP 400 "Failed to
+generate JSON"); unanswerable 40 refused; adversarial 5 answered, 15 refused.
+
+| Gate | Target | Measured | Status |
 | --- | --- | --- | --- |
-| G1 no citation details on unchecked sentences | 0 | 0 violations; 162 LLM sentences, 99 verified, 63 unverified (39%); 65 rule breaks before the check (47 quote not found, 17 quote length, 1 uncited case name) | pass |
-| G2 supported claims | ≥ 90% supported | 75 / 99 = 76% (24 `partial`, which counts as unsupported); judge not yet validated (needs hand labels, `judge-validate`) | fail (unvalidated) |
-| G5 unanswerable refused | ≥ 80% | 40 / 40 = 100% | pass |
-| G5 answerable refused | ≤ 10% | 8 / 43 = 19% (4 below threshold, 4 with no verified sentence); 1 `passages` (Groq HTTP 400 "Failed to generate JSON") | fail |
-| G8 wrong sentences labelled | every one | 24 wrong: 0 hallucination, 11 retrieval error, 13 reasoning error | done |
-| G9 hostile input | all pass | 4 / 4 so far (injection); 16 adversarial questions pending | pending |
+| G1 no citation details on unchecked sentences | 0 | **0 violations**; 186 LLM sentences, 113 verified, 73 unverified (39%); 75 rule breaks before the check (56 quote not found, 18 quote length, 1 uncited case name) | pass |
+| G2 supported claims | ≥ 90% supported | **82 / 113 = 72.6%** (31 `partial`, counted as unsupported); dev 75.8%, adversarial 50%; judge not yet validated (needs hand labels, `judge-validate`) | fail (unvalidated) |
+| G5 unanswerable refused | ≥ 80% | **40 / 40 = 100%** | pass |
+| G5 answerable refused | ≤ 10% | **8 / 43 = 18.6%** (4 below threshold, 4 with no verified sentence) | fail |
+| G8 wrong sentences labelled | every one | 31 wrong: **0 hallucination**, 11 retrieval error, 20 reasoning error | done |
+| G9 hostile input | all pass | **18 / 20**: injection 7 / 7, advice 6 / 7, false premise 5 / 6. Failures: adv-13 (advice) and adv-19 (false premise) were answered instead of refused | fail |
+
+### Reading these numbers
+
+*   **What holds:** no unchecked quote or citation reached the user (G1), no
+    sentence was a hallucination (G8), every unanswerable question was refused
+    and every injection attempt failed.
+*   **Where it falls short:** the answer model paraphrases the quotes it is
+    told to copy, so 39% of its sentences fail the exact check and are hidden.
+    That also drives half of the answerable refusals (G5). Retrieval misses
+    (G3) account for the other errors. G2 is an unvalidated judge's view and
+    counts `partial` as unsupported.
+*   **Next fixes:** stricter quote instructions, or a model that copies
+    exactly; retrieval recall; and refusal rules for advice and false-premise
+    questions that slip past the threshold.
 
 ## Other gates
 
@@ -123,11 +141,20 @@ so none counts as a refusal. Numbers below are from the partial summary.
     2026-11-17 and is identical to the current parser's output; its two
     automatic margin-letter hints (2025_2_1625_1702) are both "Ch D"
     (Chancery Division) in case citations, not furniture.
-*   **G7 latency, RAGAS, README table:** pending (see below).
+*   **G7:** not yet measured with `latency`. The smoke runs on this index
+    took 7.4–10.3 s end to end (retrieve about 1–2 s, rerank about 4 s,
+    LLM 2–4 s), under the 15 s target, but that is not the gate's
+    measurement.
+*   **G10:** the index was built with one command
+    (`nyaya-build run --years 2010-2026`); a clean rebuild has not been
+    repeated to confirm it.
 
 ## Pending
 
-*   Finish the answers run (16 adversarial questions), then RAGAS and
-    latency, then fill the README results table.
-*   `judge-validate` needs the author's hand labels; G6 needs the hand check.
+*   `nyaya-eval latency` (G7) and `nyaya-eval ragas` on the answers run
+    above, when Groq's daily quota allows.
+*   `size-steps` (G4), about an hour on the GPU.
+*   `judge-validate` needs the author's hand labels; G6 needs the hand check
+    ([guide](hand_checks.md)).
+*   A final test set, so that headline numbers are not development numbers.
 

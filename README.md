@@ -130,18 +130,24 @@ Filters: `year_from`, `year_to`, `act` (normalised, so "IPC" and "Indian Penal C
 
 Every goal is measured with `nyaya-eval` against frozen question sets ([`eval/datasets/`](eval/datasets/README.md)): a development set drafted from headnote points for the author's hand check, 40 deliberately unanswerable questions and 20 adversarial ones. A separate final test set is used only for reporting. Each run is saved under `eval/runs/` and in the `eval_runs` table.
 
+### v1 results
+
+Measured on 2026-11-17 and 2026-11-18 on index `p1-2010-2026a` (13,007 judgments, 296,151 chunks), with 44 development, 40 unanswerable and 20 adversarial questions. These are **development numbers**: the dev set is a draft that has not been hand-checked yet, and no final test set exists. One dev question is 2.3 points. Full detail, run ids and caveats are in [docs/eval_results.md](docs/eval_results.md).
+
 | Gate | Target | Command | Result |
 | --- | --- | --- | --- |
-| G1 Every shown citation is checked | No citation details on any unverified sentence; rule-break rate recorded | `answers` | results pending |
-| G2 Supported claims | ≥ 90% of verified sentences rated *supported* by a judge from another model family (judge κ ≥ 0.6 against hand labels) | `judge-validate`, `answers` | results pending |
-| G3 Search finds the right judgment | Right judgment in the top 50 before reranking for ≥ 90% of questions, and in the top 5 after reranking for ≥ 75% | `retrieval` | results pending |
-| G4 Search holds as the index grows | From about 10,000 chunks to the full slice, both G3 numbers drop by ≤ 5 points (95% paired-bootstrap upper bound) | `size-steps` | results pending |
-| G5 Refusal rate | ≥ 80% of unanswerable questions refused; ≤ 10% of answerable ones | `tune-threshold`, `answers` | results pending |
-| G6 Clean parsing and chunking | ≥ 98% paragraph integrity, ≥ 99% size compliance, no chunk over the model limit; no margin letters or running heads in a 50-PDF hand check | `nyaya-build parse-chunk`, `g6-holdout` | results pending |
-| G7 Answers within 15 s | 95th percentile, end to end, warm, one request at a time | `latency` | results pending |
-| G8 Every answer can be explained | A trace per request; every wrong answer labelled hallucination, retrieval error or reasoning error | `answers` | results pending |
-| G9 Safe on hostile input | No unchecked citation details; advice-seeking and false-premise questions refused or given the standing notice | `answers` | results pending |
-| G10 Reproducible | One command rebuilds the index from the dataset snapshot of 2026-11-11 | `nyaya-build run` | results pending |
+| G1 Every shown citation is checked | No citation details on any unverified sentence; rule-break rate recorded | `answers` | ✅ **0 violations** in 186 sentences; 39% of LLM sentences failed the exact quote check and were hidden |
+| G2 Supported claims | ≥ 90% of verified sentences rated *supported* by a judge from another model family (judge κ ≥ 0.6 against hand labels) | `judge-validate`, `answers` | ❌ **72.6%** (82 of 113; "partial" counts as unsupported); judge not yet validated |
+| G3 Search finds the right judgment | Right judgment in the top 50 before reranking for ≥ 90% of questions, and in the top 5 after reranking for ≥ 75% | `retrieval` | ❌ **84%** top 50, **73%** top 5 (from 77% and 70% before the BM25 fix) |
+| G4 Search holds as the index grows | From about 10,000 chunks to the full slice, both G3 numbers drop by ≤ 5 points (95% paired-bootstrap upper bound) | `size-steps` | ⏳ not measured yet |
+| G5 Refusal rate | ≥ 80% of unanswerable questions refused; ≤ 10% of answerable ones | `tune-threshold`, `answers` | ⚠️ **100%** of unanswerable refused (pass); **18.6%** of answerable refused (fail) |
+| G6 Clean parsing and chunking | ≥ 98% paragraph integrity, ≥ 99% size compliance, no chunk over the model limit; no margin letters or running heads in a 50-PDF hand check | `nyaya-build parse-chunk`, `g6-holdout` | ✅ automated: **100%** integrity, **99.97%** size compliance, 0 over the limit; ⏳ hand check pending |
+| G7 Answers within 15 s | 95th percentile, end to end, warm, one request at a time | `latency` | ⏳ not measured yet (smoke runs: 7.4–10.3 s) |
+| G8 Every answer can be explained | A trace per request; every wrong answer labelled hallucination, retrieval error or reasoning error | `answers` | ✅ 31 wrong sentences labelled: **0 hallucinations**, 11 retrieval errors, 20 reasoning errors |
+| G9 Safe on hostile input | No unchecked citation details; advice-seeking and false-premise questions refused or given the standing notice | `answers` | ❌ **18 of 20**: all 7 injections blocked; one advice and one false-premise question answered |
+| G10 Reproducible | One command rebuilds the index from the dataset snapshot of 2026-11-11 | `nyaya-build run` | ✅ built with one command; a clean rebuild not yet repeated |
+
+**In short:** no unchecked quote and no hallucinated sentence reached a user. The system is weaker on recall and on how often it answers. The answer model paraphrases quotes it should copy, and the exact check then hides those sentences, which also explains about half of the wrong refusals.
 
 ```bash
 uv run nyaya-eval build-devset        # draft the development set from headnote points
@@ -174,7 +180,7 @@ The unit tests (`uv run pytest`) cover every response path of the pipeline and t
 | --- | --- |
 | Language and tooling | Python 3.12, uv, ruff, pytest, GitHub Actions |
 | PDF parsing | PyMuPDF (word coordinates), position-based removal of page furniture per layout era |
-| Storage and search | PostgreSQL 17, pgvector (HNSW, iterative scan), Postgres full-text search, Docker Compose |
+| Storage and search | PostgreSQL 17, pgvector (HNSW, iterative scan), BM25 keyword search (bm25s, filters applied in SQL; Postgres full-text search as a fallback), Docker Compose |
 | Embedding | Qwen3-Embedding-0.6B, 1024 dimensions, local GPU (sentence-transformers, PyTorch) |
 | Reranking | Qwen3-Reranker-0.6B on the local GPU; fallback Cohere Rerank 5 Fast through OpenRouter (the only paid call, logged) |
 | Answer LLM | A free hosted model through an OpenAI-compatible API (currently `openai/gpt-oss-120b` on Groq) |
