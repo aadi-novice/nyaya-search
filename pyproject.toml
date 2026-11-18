@@ -25,10 +25,13 @@ dependencies = [
     "openai>=1.50",
     "httpx>=0.27",
     "regex>=2024.9",
+    # the keyword leg (nyaya.search.bm25, decision 2026-11-17). Stemming
+    # (retrieval.bm25_stemmer = "english") also needs PyStemmer; it is off.
+    "bm25s>=0.2",
 ]
 
 [project.optional-dependencies]
-eval = ["bm25s>=0.2", "scipy>=1.14"]
+eval = ["scipy>=1.14"]
 dev = ["pytest>=8.3", "pytest-cov>=6.0", "ruff>=0.8"]
 # kaggle/push.py: the Kaggle dataset, kernel and output helpers
 # six: kaggle 2.2.5 imports it without declaring it

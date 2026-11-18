@@ -93,6 +93,7 @@ def make_engine_retriever(
     embedder: Any,
     reranker: Any | None,
 ) -> tuple[EngineRetriever, Any]:
+    from nyaya.search.bm25 import keyword_index
     from nyaya.search.expand import expand
     from nyaya.search.fusion import rrf
     from nyaya.search.postgres import PostgresSearch
@@ -104,6 +105,9 @@ def make_engine_retriever(
         settings=settings,
         act_normalizer=act_normalizer(settings),
     )
+    # the keyword leg as configured (BM25 by default); a temporary G4 schema
+    # gets an in-memory index of its own chunks
+    engine.bm25 = keyword_index(settings, engine.conn, engine.index_version, save=schema is None)
     r = settings.retrieval
 
     def bound_expand(hits: Any, eng: Any) -> Any:

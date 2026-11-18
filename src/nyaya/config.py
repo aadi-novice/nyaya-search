@@ -185,6 +185,10 @@ class Retrieval(_Section):
     ef_search: int
     expand_rank_offset: float
     lookup_max_editorial: int
+    # the keyword leg: "bm25" (bm25s, nyaya.search.bm25) or "postgres" (full-text search)
+    keyword_engine: Literal["bm25", "postgres"] = "bm25"
+    # "" (no stemming) or "english" (Snowball; needs PyStemmer installed)
+    bm25_stemmer: Literal["english", ""] = ""
 
 
 class Refusal(_Section):

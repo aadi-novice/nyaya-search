@@ -347,4 +347,6 @@ def test_cli_parser_accepts_the_documented_commands():
     assert p.parse_args(["parse-chunk", "--years", "2010-2026"]).years[-1] == 2026
     assert p.parse_args(["embed", "--years", "2025"]).years == [2025]
     assert p.parse_args(["load", "--version", "v1"]).years is None
+    bm = p.parse_args(["bm25", "--version", "v1", "--force"])
+    assert (bm.command, bm.version, bm.force) == ("bm25", "v1", True)
     assert p.parse_args(["run", "--years", "2025", "--version", "v1"]).workers == 1

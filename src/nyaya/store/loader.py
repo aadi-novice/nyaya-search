@@ -538,15 +538,18 @@ def load(
     log.info("loaded %s: %s", version, counts)
 
     if engine_factory is None:
+        from nyaya.search.bm25 import keyword_index
         from nyaya.search.postgres import PostgresSearch
         from nyaya.zone.zoner import act_normalizer
 
         def engine_factory(v: str) -> SearchEngine:
+            # builds and saves the version's BM25 index (build/bm25/<version>)
             return PostgresSearch(
                 index_version=v,
                 settings=settings,
                 conn=conn,
                 act_normalizer=act_normalizer(settings),
+                bm25=keyword_index(settings, conn, v),
             )
 
     failures = db_id_check(conn, version)

@@ -7,6 +7,8 @@ Subcommands, run in this order (`run` does them all, skipping finished work):
     nyaya-build parse-chunk --years 2025       parse, zone, chunk, link per decision year
     nyaya-build embed --years 2025             build/vectors/<year>.npy (+ .ids.txt), GPU
     nyaya-build load --version <name>          a new `building` index version, checked
+                                               (also builds build/bm25/<name>)
+    nyaya-build bm25 --version <name>          (re)build that BM25 keyword index alone
     nyaya-build activate --version <name>
     nyaya-build run --years 2025 --version <name>
 
@@ -895,6 +897,21 @@ def activate_version(settings: Settings, version: str) -> dict[str, Any]:  # pra
     return out
 
 
+def bm25_version(settings: Settings, version: str, force: bool) -> str:  # pragma: no cover
+    """Build (or with `force`, rebuild) the BM25 keyword index of `version`."""
+    from nyaya.search.bm25 import build_index, index_dir, keyword_index
+    from nyaya.store.db import connect
+
+    directory = index_dir(BuildPaths.from_settings(settings).root, version)
+    with connect(settings, autocommit=True) as conn:
+        if force:
+            build_index(conn, version, stemmer=settings.retrieval.bm25_stemmer, directory=directory)
+        else:
+            keyword_index(settings, conn, version)
+    log.info("bm25: %s ready in %s", version, directory)
+    return str(directory)
+
+
 def version_status(settings: Settings, version: str) -> str | None:  # pragma: no cover
     from nyaya.store.db import connect
 
@@ -931,6 +948,9 @@ def build_parser() -> argparse.ArgumentParser:
     ld.add_argument("--years", type=parse_years, default=None, help="default: every built year")
     a = sub.add_parser("activate", help="make a ready index version active")
     a.add_argument("--version", required=True)
+    bm = sub.add_parser("bm25", help="build the BM25 keyword index of a loaded version")
+    bm.add_argument("--version", required=True)
+    bm.add_argument("--force", action="store_true", help="rebuild even if it is current")
 
     r = sub.add_parser("run", help="every stage for --years, skipping finished work")
     r.add_argument("--years", type=parse_years, required=True)
@@ -982,6 +1002,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         load_version(settings, args.version, years=args.years)
     elif cmd == "activate":
         activate_version(settings, args.version)
+    elif cmd == "bm25":
+        bm25_version(settings, args.version, args.force)
     elif cmd == "run":
         run_manifest(settings, paths, False)
         settings = run_calibrate(settings, paths, False)

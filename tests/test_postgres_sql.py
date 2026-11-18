@@ -118,7 +118,7 @@ def test_build_tsquery():
 def test_build_keyword_sql(omap):
     w = pg.build_filter_sql(Filters(year_from=2020), omap)
     sql, params = pg.build_keyword_sql("bail", w, "v1", 50)
-    assert "ts_rank_cd(c.tsv, q.query)" in sql
+    assert "ts_rank(c.tsv, q.query, 1)" in sql
     assert "c.tsv @@ q.query" in sql
     assert "JOIN judgments j" in sql
     assert "ORDER BY score DESC, c.chunk_id" in sql

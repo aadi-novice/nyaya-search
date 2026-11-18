@@ -751,6 +751,7 @@ def build_deps(settings: Settings) -> Deps:  # pragma: no cover - needs the GPU 
         QwenReranker,
         startup_check,
     )
+    from nyaya.search.bm25 import keyword_index
     from nyaya.search.expand import expand
     from nyaya.search.fusion import rrf
     from nyaya.search.postgres import PostgresSearch
@@ -766,6 +767,8 @@ def build_deps(settings: Settings) -> Deps:  # pragma: no cover - needs the GPU 
     )
     version = first.index_version
     thresholds = first.thresholds()
+    # one BM25 index for every worker thread (read-only, memory-mapped)
+    bm25 = keyword_index(settings, first.conn, version)
     first.conn.close()
 
     def make_engine() -> PostgresSearch:
@@ -774,6 +777,7 @@ def build_deps(settings: Settings) -> Deps:  # pragma: no cover - needs the GPU 
             settings=settings,
             conn=connect(settings, autocommit=True),
             act_normalizer=normalise_act,
+            bm25=bm25,
         )
 
     gpu = threading.Lock()
