@@ -143,6 +143,10 @@ class Acts(_Section):
 class Quote(_Section):
     min_words: int
     max_words: int
+    # Quote snapping (answer/quote_snap.py, design decision 2026-11-18).
+    snap: bool = False
+    snap_min_similarity: float = Field(default=0.90, gt=0.0, le=1.0)
+    snap_max_edits: int = Field(default=6, ge=0)
 
 
 class EmbedModel(_Section):

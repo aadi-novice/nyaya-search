@@ -499,6 +499,8 @@ def summarize(
         "rule_breaks_per_sentence": _share(n_breaks, n_out),
         "answers_with_rule_breaks": sum(1 for r in records if r["rule_breaks"]),
         "rule_break_kinds": _count(b.get("kind", "?") for r in records for b in r["rule_breaks"]),
+        # quote_not_found breaks whose quote was replaced by the cited span (quote.snap)
+        "snapped_citations": sum(1 for r in records for b in r["rule_breaks"] if b.get("snap")),
         "unchecked_citation_details": violations,
         "passed": not violations,
     }

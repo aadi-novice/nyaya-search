@@ -363,6 +363,7 @@ def test_summarize():
     g1 = m["g1"]
     assert (g1["verified_sentences"], g1["unverified_sentences"], g1["rule_breaks"]) == (6, 1, 2)
     assert g1["unverified_share"] == pytest.approx(1 / 7) and g1["passed"]
+    assert g1["snapped_citations"] == 0
     g2 = m["g2"]
     assert (g2["judged_sentences"], g2["supported"], g2["judge_errors"]) == (5, 3, 1)
     assert g2["supported_share"] == pytest.approx(0.6) and not g2["passed"]
@@ -455,3 +456,18 @@ def test_session_entry_names_provider_not_key(monkeypatch):
 
 def test_status_constants_cover_the_contract():
     assert {s.value for s in Status} == A.REFUSAL_STATUSES | A.NEITHER_STATUSES | {"answered"}
+
+
+def test_summarize_counts_snapped_citations():
+    r = rec("d1", "dev", "answered", [("supported", None)], 0, 2)
+    r["rule_breaks"] = [
+        {"kind": "quote_not_found", "snap": {"span": "x"}},
+        {"kind": "quote_length"},
+    ]
+    m = A.summarize(
+        [r],
+        min_supported_share=0.9,
+        min_unanswerable_refused_share=0.8,
+        max_wrong_refusal_share=0.1,
+    )
+    assert m["g1"]["rule_breaks"] == 2 and m["g1"]["snapped_citations"] == 1
