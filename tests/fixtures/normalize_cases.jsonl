@@ -62,3 +62,10 @@
 {"id": "n062", "fn": "normalize_judge", "category": "judge", "input": "S. RAVINDRA BHAT", "expected": "S RAVINDRA BHAT"}
 {"id": "n063", "fn": "normalize_judge", "category": "judge", "input": "M. M. SUNDRESH, J.", "expected": "M M SUNDRESH"}
 {"id": "n064", "fn": "normalize_judge", "category": "judge", "input": "", "expected": ""}
+{"id": "n065", "fn": "normalize_text", "category": "dashes", "input": "non‑arbitrability", "expected": "non-arbitrability"}
+{"id": "n066", "fn": "normalize_text", "category": "dashes", "input": "sub‑section 2 of Section 44", "expected": "sub-section 2 of section 44"}
+{"id": "n067", "fn": "normalize_text", "category": "dashes", "input": "vis‑à‑vis", "expected": "vis-à-vis"}
+{"id": "n068", "fn": "normalize_text", "category": "dashes", "input": "pre‐arrest bail", "expected": "pre-arrest bail"}
+{"id": "n069", "fn": "normalize_text", "category": "dashes", "input": "pages 5‒7", "expected": "pages 5-7"}
+{"id": "n070", "fn": "normalize_text", "category": "dashes", "input": "Art. 14 ― equality", "expected": "art. 14 - equality"}
+{"id": "n071", "fn": "normalize_text", "category": "dashes", "input": "− 5 marks", "expected": "- 5 marks"}

@@ -89,3 +89,27 @@ def test_template_without_sections_raises(tmp_path):
     (tmp_path / "bad.md").write_text("no headings", encoding="utf-8")
     with pytest.raises(ValueError, match="## system"):
         load_template("bad", prompts_dir=tmp_path)
+
+
+def test_answer_v2_is_available_beside_v1():
+    # v1 stays the default; v2 is chosen with versions.prompt = "answer_v2"
+    assert SETTINGS.versions.prompt == "answer_v1"
+    v1, v2 = load_template("answer_v1"), load_template("answer_v2")
+    assert v1.system != v2.system
+    ps = [passage(1), passage(2)]
+    system, user, label_map = build_prompt("Is bail a right?", ps, "answer_v2", SETTINGS)
+    assert list(label_map) == ["P1", "P2"]
+    assert "{{" not in system + user
+    assert "between 8 and 40 words" in system
+    # quote rules the citation check enforces, and the G9 refusal rules
+    flat = " ".join(system.split())
+    for phrase in (
+        'never use "..."',
+        "plain hyphen",
+        "first choose the quote",
+        "hide, conceal",
+        "does not help with concealing",
+        "do not support the premise",
+    ):
+        assert phrase in flat
+    assert "Is bail a right?" in user and "[P2]" in user

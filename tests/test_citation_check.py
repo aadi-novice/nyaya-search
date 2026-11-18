@@ -340,3 +340,120 @@ def test_default_finder_requires_link_module(monkeypatch):
 
     with pytest.raises(RuntimeError, match="find_citations"):
         citation_check.default_find_citations()
+
+
+# --- quote snapping and saved quotes (decision 2026-11-18) ----------------------------
+
+SNAP_ON = SETTINGS.model_copy(update={"quote": SETTINGS.quote.model_copy(update={"snap": True})})
+# P1_QUOTE with LLM framing words: not found, but a near-verbatim copy of P1
+FRAMED = "In short, " + P1_QUOTE
+
+
+def run_with(settings, passages: dict, sentences: list) -> CheckResult:
+    label_map = {label: make_ref(p) for label, p in passages.items()}
+    chunks = {p["chunk_id"]: make_chunk(p) for p in passages.values()}
+    return check(
+        {"sentences": sentences, "gaps": []},
+        label_map,
+        chunks,
+        settings,
+        find_citations=fake_find_citations,
+        resolve_alias=fake_resolve_alias,
+    )
+
+
+def test_snapping_is_off_by_default():
+    assert SETTINGS.quote.snap is False
+    assert (SETTINGS.quote.snap_min_similarity, SETTINGS.quote.snap_max_edits) == (0.9, 6)
+    sent = {"sentence": "x", "citations": [{"label": "P1", "quote": FRAMED}]}
+    result = run(BASE, [sent])
+    assert result.unverified[0].reason is UnverifiedReason.QUOTE_NOT_FOUND
+    (b,) = result.rule_breaks
+    assert (b.kind, b.label, b.detail, b.snap) == ("quote_not_found", "P1", FRAMED, None)
+
+
+def test_failed_quotes_are_kept_in_the_rule_break():
+    short = {"sentence": "x", "citations": [{"label": "P1", "quote": "too short"}]}
+    unknown = {"sentence": "y", "citations": [{"label": "P9", "quote": P1_QUOTE}]}
+    breaks = run(BASE, [short, unknown]).rule_breaks
+    assert [(b.kind, b.detail) for b in breaks] == [
+        ("quote_length", "too short"),
+        ("unknown_label", None),
+    ]
+    assert breaks[0].to_dict()["detail"] == "too short"
+
+
+def test_snapped_quote_is_the_exact_span_of_the_cited_chunk():
+    sent = {"sentence": "x", "citations": [{"label": "P1", "quote": FRAMED}]}
+    result = run_with(SNAP_ON, BASE, [sent])
+    assert not result.unverified
+    (cit,) = result.verified[0].citations
+    assert cit.quote != FRAMED and cit.quote in BASE["P1"]["text"]
+    assert cit.quote.startswith("The power under Section 482")
+    (b,) = result.rule_breaks  # still counted as a rule break
+    assert (b.kind, b.label, b.detail) == ("quote_not_found", "P1", FRAMED)
+    assert b.snap["span"] == cit.quote and b.snap["method"] == "fuzzy"
+    assert 0.9 <= b.snap["similarity"] < 1.0
+
+
+def test_snapping_never_moves_a_quote_to_another_passage():
+    # an exact quote of P1, cited as P5: P5 is the only passage searched
+    sent = {"sentence": "x", "citations": [{"label": "P5", "quote": P1_QUOTE}]}
+    result = run_with(SNAP_ON, BASE, [sent])
+    assert not result.verified
+    assert result.unverified[0].reason is UnverifiedReason.QUOTE_NOT_FOUND
+    assert result.rule_breaks[0].snap is None
+
+
+def test_snapping_never_rescues_a_paraphrase_or_a_length_failure():
+    para = "Quashing powers should be used rarely and carefully, without holding a mini trial."
+    long_ = " ".join([P1_QUOTE] * 3)
+    sents = [
+        {"sentence": "x", "citations": [{"label": "P1", "quote": para}]},
+        {"sentence": "y", "citations": [{"label": "P1", "quote": long_}]},
+    ]
+    result = run_with(SNAP_ON, BASE, sents)
+    assert not result.verified
+    assert [u.reason for u in result.unverified] == [
+        UnverifiedReason.QUOTE_NOT_FOUND,
+        UnverifiedReason.QUOTE_LENGTH,
+    ]
+
+
+def test_a_snapped_span_must_itself_respect_the_length_rule():
+    # 8 words with a framing word: the span the quote copies is 7 words
+    text_p = dict(BASE["P1"], text="Bail is the rule, jail the exception. Other text follows.")
+    quote = "Indeed, bail is the rule, jail the exception."
+    sent = {"sentence": "x", "citations": [{"label": "P1", "quote": quote}]}
+    result = run_with(SNAP_ON, {"P1": text_p}, [sent])
+    assert result.unverified[0].reason is UnverifiedReason.QUOTE_NOT_FOUND
+    assert result.rule_breaks[0].snap is None
+
+
+def test_snap_still_needs_step_four():
+    sent = {
+        "sentence": "As held in Smith v. Jones, the power is used sparingly.",
+        "citations": [{"label": "P1", "quote": FRAMED}],
+    }
+    result = run_with(SNAP_ON, BASE, [sent])
+    assert not result.verified
+    assert result.unverified[0].reason is UnverifiedReason.UNCITED_CASE_NAME
+
+
+def test_hyphen_variants_now_match():
+    # the LLM writes U+2011 inside words; before 2026-11-18 this failed step 3
+    p = dict(
+        BASE["P1"], text="The referral court may reject claims which are ex-facie non-arbitrable."
+    )
+    quote = "The referral court may reject claims which are ex\u2011facie non\u2011arbitrable."
+    sent = {"sentence": "x", "citations": [{"label": "P1", "quote": quote}]}
+    result = run({"P1": p}, [sent])
+    assert result.verified and not result.rule_breaks
+
+
+def test_rule_break_trace_form_has_snap_only_when_snapped():
+    sent = {"sentence": "x", "citations": [{"label": "P1", "quote": FRAMED}]}
+    (plain,) = run(BASE, [sent]).rule_breaks
+    assert "snap" not in plain.to_dict()
+    (snapped,) = run_with(SNAP_ON, BASE, [sent]).rule_breaks
+    assert snapped.to_dict()["snap"]["method"] == "fuzzy"

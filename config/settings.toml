@@ -138,6 +138,13 @@ no_year_allowlist = ["Constitution of India"]
 [quote]
 min_words = 8
 max_words = 40
+# A quote not found in its cited passage is replaced by the exact span of that
+# passage it copies, when they differ only in spacing and punctuation or match
+# at >= snap_min_similarity (word level) with <= snap_max_edits changed words
+# (src/nyaya/answer/quote_snap.py; design decision 2026-11-18).
+snap = false
+snap_min_similarity = 0.90
+snap_max_edits = 6
 
 [embed]
 model = "Qwen/Qwen3-Embedding-0.6B"

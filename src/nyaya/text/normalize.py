@@ -10,7 +10,9 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# Curly quotes to straight quotes, en and em dashes to a hyphen.
+# Curly quotes to straight quotes; hyphen and dash variants to a hyphen. The
+# answer LLM writes U+2011 inside words (non-breaking hyphens) where the
+# judgments have "-": before 2026-11-18 every such quote failed the check.
 _CHAR_MAP = str.maketrans(
     {
         "\u2018": "'",  # left single quotation mark
@@ -21,14 +23,18 @@ _CHAR_MAP = str.maketrans(
         "\u201d": '"',  # right double quotation mark
         "\u201e": '"',  # double low-9 quotation mark
         "\u201f": '"',  # double high-reversed-9 quotation mark
+        "\u2010": "-",  # hyphen (NFKC turns U+2011, the non-breaking hyphen, into this)
+        "\u2012": "-",  # figure dash
         "\u2013": "-",  # en dash
         "\u2014": "-",  # em dash
+        "\u2015": "-",  # horizontal bar
+        "\u2212": "-",  # minus sign
     }
 )
 
 
 def normalize_text(text: str) -> str:
-    """NFKC, straight quotes and hyphens, collapsed whitespace, lower case.
+    """NFKC, straight quotes, dash variants to hyphens, collapsed whitespace, lower case.
 
     Whitespace runs become one space and the ends are trimmed. Hyphenated line
     breaks are already rejoined by the parser, so they are not handled here.

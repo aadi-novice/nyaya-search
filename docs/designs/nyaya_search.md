@@ -1101,7 +1101,56 @@ to.
     order above.
 *   If no sentence is verified, the status is `refused`, with the nearest
     passages shown.
-*   Every rule break is counted in the trace before filtering.
+*   Every rule break is counted in the trace before filtering. A
+    `quote_length` or `quote_not_found` rule break keeps the LLM's quote in
+    `detail` (from 2026-11-18), so a saved run can be re-checked offline with
+    `nyaya-eval replay-check`.
+
+**Quote snapping (decision 2026-11-18).** In the answers run of 2026-11-17,
+73 of 186 sentences (39%) failed the check: 56 `quote_not_found`, 18
+`quote_length`. That run did not save the failing quotes, so the diagnosis
+used the sentence written with each quote as a stand-in (an estimate, see
+`docs/eval_results.md`). Two fixes keep the G1 guarantee that every quote
+shown is an exact substring of the passage it cites:
+
+*   **Normalisation.** The answer model writes U+2011 (non-breaking hyphen)
+    inside words; the judgments have `-`. NFKC turns U+2011 into U+2010, which
+    `normalize_text()` did not map, so every quote with a hyphenated word
+    failed. U+2010, U+2012, U+2015 and U+2212 now map to `-` as `–`/`—`
+    already did (file 11). `config/act_aliases.toml` contains none of these
+    characters; an Act keyword stored at build time with one of them would
+    need the index rebuilt to match again (none is known).
+*   **Snapping** (`quote.snap`, file `answer/quote_snap.py`), off by default.
+    When step 3 fails, code looks in the **cited chunk only** for the span the
+    quote copies, and shows that span, cut from the chunk's text, instead of
+    the LLM's quote. Two tiers: (1) the quote and a run of whole words differ
+    only in spacing and punctuation (split ligatures such as "ﬁ led", a
+    hyphen before a line break, a stray "·"); (2) the word-level
+    `SequenceMatcher` ratio is at least `quote.snap_min_similarity` (0.90),
+    with at most `quote.snap_max_edits` (6) words changed or missing. Never
+    snapped: a quote with an ellipsis (stitched), a change in any number, an
+    added or dropped negation, or a word changed only by a prefix or suffix
+    ("lawful"/"unlawful"). The snapped span must itself pass step 2; step 4
+    still applies; the failure is still a `quote_not_found` rule break, with
+    `snap` (span, similarity, tier) set in the trace.
+*   **Threshold.** In the stand-in data, near-verbatim copies scored 0.92–1.0
+    and the closest paraphrases (words of the passage dropped or reworded)
+    0.80–0.87, with nothing between 0.873 and 0.919; 0.90 sits in that gap.
+    Against the passages a sentence did not cite, no sentence reached 0.90
+    except where the same text appears in both passages.
+*   **Risks.** A snapped quote is the source's words, not the model's, so the
+    sentence may say slightly more or less than the shown quote (G2's judge
+    still rates every verified sentence). A span may stop short where the
+    source text is interrupted, for example by a footnote inside a sentence.
+    Snapping makes more sentences verified, which also raises the chance that
+    an advice or false-premise question gets an answer (G9). It costs up to
+    about 60 ms per failed citation on the longest chunks.
+*   **Why off by default.** The replay gain could be estimated only with
+    stand-in quotes (3 snaps, +1 answered question). Turn it on once a live
+    run, which now saves the failing quotes, confirms the gain on real quotes.
+    Alternative D's "code copies the quote" variant remains deferred; snapping
+    is narrower: it only replaces a quote that the model already copied with
+    small edits. Alternative S (a fuzzy *search* route) is unrelated.
 
 **Notices.** These are shown on every answer:
 
@@ -1817,7 +1866,9 @@ to.
     *   **`normalize_text(text) -> str`** is used for quote matching, Act
         names and case titles. Its steps, in order:
         1.  Unicode NFKC;
-        2.  curly quotes mapped to straight quotes, and `–`/`—` to `-`;
+        2.  curly quotes mapped to straight quotes, and `–`/`—` to `-`
+            (from 2026-11-18 also U+2010 and U+2011 hyphens, U+2012 figure
+            dash, U+2015 horizontal bar and U+2212 minus);
         3.  any run of whitespace collapsed to one space;
         4.  lower case.
 
