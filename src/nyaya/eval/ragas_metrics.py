@@ -167,8 +167,20 @@ def _inputs(name: str, s: Sample) -> dict[str, Any]:
     }
 
 
+TRANSIENT_ERRORS = ("APIConnectionError", "APITimeoutError", "ConnectError", "ConnectTimeout")
+
+
+class ConnectionLost(RuntimeError):
+    """The LLM could not be reached (network or timeout); resume the run later."""
+
+
 def score_sample(s: Sample, metrics: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """`{metric: {"score", "skipped", "error"}}`. RateLimitExhausted is raised."""
+    """`{metric: {"score", "skipped", "error"}}`.
+
+    RateLimitExhausted is raised, and a connection or timeout error raises
+    ConnectionLost, so the sample is not recorded and a later run scores it.
+    (On 2026-11-18 a network outage was otherwise recorded as 32 finished
+    samples with every metric in error.)"""
     out: dict[str, dict[str, Any]] = {}
     for name, metric in metrics.items():
         entry: dict[str, Any] = {"score": None, "skipped": skip_reason(name, s), "error": None}
@@ -178,7 +190,10 @@ def score_sample(s: Sample, metrics: Mapping[str, Any]) -> dict[str, dict[str, A
             except RateLimitExhausted:
                 raise
             except Exception as exc:
-                entry["error"] = f"{type(exc).__name__}: {exc}"
+                text = f"{type(exc).__name__}: {exc}"
+                if any(marker in text for marker in TRANSIENT_ERRORS):
+                    raise ConnectionLost(text) from exc
+                entry["error"] = text
             else:
                 if math.isnan(value):
                     entry["error"] = "no score (nothing to judge)"
@@ -211,7 +226,7 @@ def run_session(
             break
         try:
             scores = score_sample(s, metrics)
-        except RateLimitExhausted as exc:
+        except (RateLimitExhausted, ConnectionLost) as exc:
             progress.stopped = f"{exc}; run again to resume"
             break
         results.append(

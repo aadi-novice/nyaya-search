@@ -287,6 +287,23 @@ def test_session_resumes_and_stops_on_quota(tmp_path):
     assert p.finished_now == 1 and p.remaining == 0 and set(results.load()) == {"dev-1", "dev-2"}
 
 
+@pytest.mark.parametrize(
+    "err", ["APIConnectionError: Connection error.", "APITimeoutError: Request timed out."]
+)
+def test_session_stops_on_connection_loss_without_recording(tmp_path, err):
+    from nyaya.answer.llm_client import LLMUnavailable
+
+    samples = R.build_samples([record("dev-1"), record("dev-2")], REFS, max_contexts=8)
+    results = ResultsFile("answers-test", tmp_path)
+    offline = metrics(FakeCompleter(fail=LLMUnavailable(err)))
+    p = R.run_session(samples, offline, results)
+    assert p.finished_now == 0 and "resume" in p.stopped and err.split(":")[0] in p.stopped
+    assert results.load() == {}  # nothing recorded: a later run scores both
+
+    p = R.run_session(samples, metrics(), results)
+    assert p.finished_now == 2 and p.remaining == 0
+
+
 # --- report -------------------------------------------------------------------------------
 
 
