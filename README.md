@@ -134,6 +134,11 @@ Every goal is measured with `nyaya-eval` against frozen question sets ([`eval/da
 
 Measured on 2026-11-17 and 2026-11-18 on index `p1-2010-2026a` (13,007 judgments, 296,151 chunks), with 44 development, 40 unanswerable and 20 adversarial questions. These are **development numbers**: the dev set is a draft that has not been hand-checked yet, and no final test set exists. One dev question is 2.3 points. Full detail, run ids and caveats are in [docs/eval_results.md](docs/eval_results.md).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/results-gates-dark.png">
+  <img alt="Bar chart of v1 goals against their targets: quotes verified 100% (pass), unanswerable refused 100% (pass), adversarial handled 90% (fail, target 100%), right judgment in top 50 84% (fail, target 90%), answerable answered 81.4% (fail, target 90%), right judgment in top 5 after rerank 72.7% (fail, target 75%), verified sentences supported 72.6% (fail, target 90%)" src="docs/img/results-gates-light.png">
+</picture>
+
 | Gate | Target | Command | Result |
 | --- | --- | --- | --- |
 | G1 Every shown citation is checked | No citation details on any unverified sentence; rule-break rate recorded | `answers` | ✅ **0 violations** in 186 sentences; 39% of LLM sentences failed the exact quote check and were hidden |
@@ -149,7 +154,22 @@ Measured on 2026-11-17 and 2026-11-18 on index `p1-2010-2026a` (13,007 judgments
 
 **In short:** no unchecked quote and no hallucinated sentence reached a user. The system is weaker on recall and on how often it answers. The answer model paraphrases quotes it should copy, and the exact check then hides those sentences, which also explains about half of the wrong refusals.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/results-retrieval-dark.png">
+  <img alt="Retrieval before and after the BM25 keyword fix: keyword search top 50 from 20% to 80%, hybrid search top 50 from 77% to 84%, hybrid plus rerank top 5 from 70% to 73%" src="docs/img/results-retrieval-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/results-latency-dark.png">
+  <img alt="Latency breakdown: median retrieve 0.5 s, rerank 3.6 s, answer LLM 2.9 s; p95 end to end 9.4 s against a 15 s target" src="docs/img/results-latency-light.png">
+</picture>
+
 **RAGAS, on the same answers run** (44 development questions; secondary, never a gate):
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/results-ragas-dark.png">
+  <img alt="RAGAS scores: faithfulness 0.887, context precision 0.800, context recall 0.760, answer relevancy 0.641" src="docs/img/results-ragas-light.png">
+</picture>
 
 | RAGAS metric | Score | Over |
 | --- | --- | --- |
