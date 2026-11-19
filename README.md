@@ -149,6 +149,17 @@ Measured on 2026-11-17 and 2026-11-18 on index `p1-2010-2026a` (13,007 judgments
 
 **In short:** no unchecked quote and no hallucinated sentence reached a user. The system is weaker on recall and on how often it answers. The answer model paraphrases quotes it should copy, and the exact check then hides those sentences, which also explains about half of the wrong refusals.
 
+**RAGAS, on the same answers run** (44 development questions; secondary, never a gate):
+
+| RAGAS metric | Score | Over |
+| --- | --- | --- |
+| Faithfulness | **0.887** | 35 answered questions |
+| Answer relevancy | **0.641** | 35 answered questions |
+| Context precision (with reference) | **0.800** | 44 questions |
+| Context recall | **0.760** | 42 questions (2 judge replies could not be parsed) |
+
+The 8 refused questions, and the 1 that ended with no verified sentence, are left out of faithfulness and answer relevancy. The judge is `qwen3.8-27b` throughout, but on the free tiers it ran on three hosts: Groq for 29 questions, AXForge for 11 and Cloudflare Workers AI for 4, with each host's own reasoning default (Cloudflare set to low). Per-question scores record the host. See [docs/eval_results.md](docs/eval_results.md).
+
 ```bash
 uv run nyaya-eval build-devset        # draft the development set from headnote points
 uv run nyaya-eval g6-holdout          # 50 held-out PDFs, page images beside clean text, for the G6 hand check

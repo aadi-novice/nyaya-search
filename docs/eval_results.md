@@ -212,19 +212,45 @@ estimated from stand-ins, and is small.
     (`nyaya-build run --years 2010-2026`); a clean rebuild has not been
     repeated to confirm it.
 
+## RAGAS (secondary, never a gate)
+
+Run `ragas-answers-20261117T160221Z-1038ae`, finished on 2026-11-19, scored
+the 44 development questions of the answers run above. It uses ragas 0.4.3
+and `all-MiniLM-L6-v2` on the CPU for answer relevancy.
+
+| Metric | Score | Over |
+| --- | --- | --- |
+| Faithfulness | 0.887 | 35 answered questions |
+| Answer relevancy | 0.641 | 35 answered questions |
+| Context precision (with reference) | 0.800 | 44 questions |
+| Context recall | 0.760 | 42 questions; 2 judge replies could not be parsed |
+
+The 8 refused questions, and the 1 with no verified sentence, are left out
+of faithfulness and answer relevancy.
+
+**Judge hosts.** The judge model is `qwen3.8-27b` throughout. A question
+costs about 25k judge tokens, because faithfulness, context precision and
+context recall each send all 8 retrieved passages. That is far more than
+one free daily quota, so the work was spread across free tiers:
+
+| Host | Questions | Reasoning setting |
+| --- | --- | --- |
+| Groq | 29 | provider default |
+| AXForge | 11 | provider default (no reasoning tokens observed) |
+| Cloudflare Workers AI | 4 | `low` (its default is `xhigh`) |
+
+Each per-question record carries `judge_host`. Hosts may serve the same
+weights with different defaults, so treat small differences between
+questions with caution. Our exact quote check remains the primary metric.
+
+**Network outage.** On 2026-11-19 an outage was first recorded as 32
+finished questions with every metric in error. Those records were removed
+(a backup was kept), and `nyaya-eval ragas` now stops on connection and
+timeout errors instead (PR #9).
+
 ## Pending
 
 *   A complete `nyaya-eval latency` run (G7) on a day with fresh quota.
-*   **RAGAS (in progress, never a gate):** `nyaya-eval ragas --run-id
-    answers-20261117T160221Z-1038ae` has scored 8 of 44 dev questions.
-    *   **Partial means:** faithfulness 0.87, answer relevancy 0.75, context
-        precision 0.79, context recall 0.63. With n = 8 these are too few to
-        report as results.
-    *   **Cost:** each question costs about 25k judge tokens, because
-        faithfulness, context precision and context recall each send all 8
-        retrieved passages. Groq's free tier allows 200k tokens a day per
-        model, so the full set takes about 5 days of quota. The run resumes
-        where it stopped.
 *   `size-steps` (G4), about an hour on the GPU.
 *   `judge-validate` needs the author's hand labels; G6 needs the hand check
     ([guide](hand_checks.md)).
